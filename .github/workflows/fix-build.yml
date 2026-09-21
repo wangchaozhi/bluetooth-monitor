@@ -1,0 +1,57 @@
+name: One-shot compile fix
+
+on:
+  push:
+    branches: [main]
+    paths:
+      - ".github/workflows/fix-build.yml"
+
+permissions:
+  contents: write
+
+jobs:
+  fix:
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v7.0.1
+        with:
+          fetch-depth: 0
+
+      - name: Patch known compile issues
+        shell: python
+        run: |
+          from pathlib import Path
+
+          path = Path("src/app.rs")
+          text = path.read_text(encoding="utf-8")
+
+          old = "self.connected_id = Some(peripheral_id);"
+          new = "self.connected_id = Some(peripheral_id.clone());"
+          if old not in text:
+              raise SystemExit(f"expected pattern missing: {old}")
+          text = text.replace(old, new, 1)
+
+          old = "egui::CentralPanel::default().show_inside(ui, |ui| {"
+          new = "egui::CentralPanel::default().show(ui, |ui| {"
+          if old not in text:
+              raise SystemExit(f"expected pattern missing: {old}")
+          text = text.replace(old, new, 1)
+
+          path.write_text(text, encoding="utf-8")
+
+      - name: Install pinned Rust toolchain
+        shell: bash
+        run: |
+          rustup toolchain install 1.98.1 --profile minimal --component rustfmt
+          rustup default 1.98.1
+
+      - name: Format and commit
+        shell: bash
+        run: |
+          set -euo pipefail
+          cargo fmt
+          git config user.name "github-actions[bot]"
+          git config user.email "41898282+github-actions[bot]@users.noreply.github.com"
+          git add src/app.rs
+          git commit -m "fix: resolve initial Rust compile issues"
+          git push origin HEAD:main
