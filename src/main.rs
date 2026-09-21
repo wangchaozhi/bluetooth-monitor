@@ -52,13 +52,7 @@ fn main() -> eframe::Result {
     let result = eframe::run_native(
         "Bluetooth Monitor",
         native_options,
-        Box::new(move |cc| {
-            Ok(Box::new(BluetoothMonitorApp::new(
-                cc,
-                command_tx,
-                event_rx,
-            )))
-        }),
+        Box::new(move |cc| Ok(Box::new(BluetoothMonitorApp::new(cc, command_tx, event_rx)))),
     );
 
     let _ = shutdown_tx.send(BleCommand::Shutdown);

@@ -1,12 +1,11 @@
-use crate::{
-    ble::model::CharacteristicKey,
-    plotting::PlotChannelConfig,
-    protocol::ProtocolConfig,
-};
+use crate::{ble::model::CharacteristicKey, plotting::PlotChannelConfig, protocol::ProtocolConfig};
 use anyhow::{Context, Result};
 use chrono::Local;
 use serde::{Deserialize, Serialize};
-use std::{fs, path::{Path, PathBuf}};
+use std::{
+    fs,
+    path::{Path, PathBuf},
+};
 
 #[derive(Debug, Clone, Serialize, Deserialize, PartialEq)]
 pub struct DeviceProfile {
@@ -76,8 +75,7 @@ pub fn load_profiles_from(directory: impl AsRef<Path>) -> Result<Vec<StoredProfi
         if path.extension().and_then(|value| value.to_str()) != Some("json") {
             continue;
         }
-        let bytes = fs::read(&path)
-            .with_context(|| format!("无法读取 {}", path.display()))?;
+        let bytes = fs::read(&path).with_context(|| format!("无法读取 {}", path.display()))?;
         let profile = serde_json::from_slice::<DeviceProfile>(&bytes)
             .with_context(|| format!("无法解析 {}", path.display()))?;
         profiles.push(StoredProfile { path, profile });

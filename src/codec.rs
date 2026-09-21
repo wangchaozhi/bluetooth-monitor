@@ -27,8 +27,8 @@ pub fn parse_hex(input: &str) -> Result<Vec<u8>, HexError> {
 
     for pair in bytes.chunks_exact(2) {
         let token = std::str::from_utf8(pair).expect("HEX 输入应为 ASCII");
-        let value = u8::from_str_radix(token, 16)
-            .map_err(|_| HexError::InvalidByte(token.to_owned()))?;
+        let value =
+            u8::from_str_radix(token, 16).map_err(|_| HexError::InvalidByte(token.to_owned()))?;
         output.push(value);
     }
 
@@ -60,7 +60,10 @@ mod tests {
 
     #[test]
     fn parses_spaced_hex() {
-        assert_eq!(parse_hex("01 02 AA ff").unwrap(), vec![0x01, 0x02, 0xAA, 0xFF]);
+        assert_eq!(
+            parse_hex("01 02 AA ff").unwrap(),
+            vec![0x01, 0x02, 0xAA, 0xFF]
+        );
     }
 
     #[test]

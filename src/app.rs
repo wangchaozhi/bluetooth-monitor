@@ -3,9 +3,9 @@ use crate::{
         AdapterInfo, BleCommand, BleEvent, CharacteristicInfo, CharacteristicKey, DescriptorInfo,
         DeviceInfo, GattSnapshot,
     },
-    capture::{read_bmon, CapturePaths, CaptureRecord, CaptureSession},
+    capture::{CapturePaths, CaptureRecord, CaptureSession, read_bmon},
     codec::{format_ascii, format_hex, parse_hex},
-    plotting::{default_channels, PlotChannel, PlotChannelConfig, PlotValueType},
+    plotting::{PlotChannel, PlotChannelConfig, PlotValueType, default_channels},
     profile::{self, DeviceProfile, StoredProfile},
     protocol::{
         CrcMode, CrcStatus, DecodedField, Endian, FieldDefinition, FrameMode, ProtocolConfig,
@@ -13,7 +13,7 @@ use crate::{
     },
     protocol_export::{self, ProtocolExportFrame},
     protocol_preset::{self, ProtocolPreset, StoredProtocolPreset},
-    replay::{format_duration, ReplayController},
+    replay::{ReplayController, format_duration},
     workspace::{self, Bookmark, SessionKind, WorkspaceFile, WorkspaceLayout, WorkspaceSession},
 };
 use eframe::egui;
@@ -764,7 +764,11 @@ impl BluetoothMonitorApp {
         if value.is_empty() {
             return;
         }
-        if self.tx_history.front().is_some_and(|existing| existing == value) {
+        if self
+            .tx_history
+            .front()
+            .is_some_and(|existing| existing == value)
+        {
             return;
         }
         self.tx_history.retain(|existing| existing != value);
@@ -892,7 +896,8 @@ impl BluetoothMonitorApp {
                 let id = self.next_session_id;
                 self.next_session_id = self.next_session_id.saturating_add(1);
                 let replay = ReplayController::new(path.clone(), records);
-                self.sessions.push(RuntimeSession::replay(id, path.clone(), replay));
+                self.sessions
+                    .push(RuntimeSession::replay(id, path.clone(), replay));
                 self.active_session = self.sessions.len() - 1;
                 self.clear_plot_samples();
                 self.status = format!("已载入 {count} 条回放记录：{}", path.display());
@@ -1125,10 +1130,8 @@ impl BluetoothMonitorApp {
             Ok(path) => {
                 self.profile_name = name;
                 self.profiles = profile::load_profiles().unwrap_or_default();
-                self.selected_profile_index = self
-                    .profiles
-                    .iter()
-                    .position(|stored| stored.path == path);
+                self.selected_profile_index =
+                    self.profiles.iter().position(|stored| stored.path == path);
                 self.status = format!("Profile 已保存：{}", path.display());
             }
             Err(error) => {
@@ -1158,7 +1161,11 @@ impl BluetoothMonitorApp {
                 .collect();
         }
         self.periodic_interval_ms = profile.periodic_interval_ms.max(100);
-        self.tx_history = profile.tx_history.into_iter().take(MAX_TX_HISTORY).collect();
+        self.tx_history = profile
+            .tx_history
+            .into_iter()
+            .take(MAX_TX_HISTORY)
+            .collect();
         self.scan_name_filter = profile.scan_name_filter;
         self.scan_service_filter = profile.scan_service_filter;
         self.scan_min_rssi = profile.scan_min_rssi;
@@ -1189,7 +1196,11 @@ impl BluetoothMonitorApp {
 
     fn ensure_live_session_for_device(&mut self, device_id: &str, device_name: Option<&str>) {
         let rotate = self.sessions.get(self.live_session).is_some_and(|session| {
-            session.meta.device_id.as_deref().is_some_and(|current| current != device_id)
+            session
+                .meta
+                .device_id
+                .as_deref()
+                .is_some_and(|current| current != device_id)
                 && (!session.logs.is_empty() || !session.protocol_frames.is_empty())
         });
         if rotate {
@@ -1221,8 +1232,15 @@ impl BluetoothMonitorApp {
             version: workspace::WORKSPACE_VERSION,
             name: self.workspace_name.clone(),
             saved_at: String::new(),
-            active_session_id: self.sessions.get(self.active_session).map(|session| session.meta.id),
-            sessions: self.sessions.iter().map(|session| session.meta.clone()).collect(),
+            active_session_id: self
+                .sessions
+                .get(self.active_session)
+                .map(|session| session.meta.id),
+            sessions: self
+                .sessions
+                .iter()
+                .map(|session| session.meta.clone())
+                .collect(),
             layout: self.layout.clone(),
         }
     }
@@ -1300,14 +1318,23 @@ impl BluetoothMonitorApp {
         {
             index
         } else {
-            let id = sessions.iter().map(|session| session.meta.id).max().unwrap_or(0) + 1;
+            let id = sessions
+                .iter()
+                .map(|session| session.meta.id)
+                .max()
+                .unwrap_or(0)
+                + 1;
             sessions.push(RuntimeSession::live(id));
             sessions.len() - 1
         };
         let active_session = active_id
             .and_then(|id| sessions.iter().position(|session| session.meta.id == id))
             .unwrap_or(live_session);
-        let max_session_id = sessions.iter().map(|session| session.meta.id).max().unwrap_or(0);
+        let max_session_id = sessions
+            .iter()
+            .map(|session| session.meta.id)
+            .max()
+            .unwrap_or(0);
         let max_bookmark_id = sessions
             .iter()
             .flat_map(|session| session.meta.bookmarks.iter())
@@ -1350,24 +1377,35 @@ impl BluetoothMonitorApp {
     }
 
     fn add_log_bookmark(&mut self, entry: &LogEntry) {
-        let replay_position_ms = self.active_runtime_session().replay.as_ref().map(ReplayController::position_ms);
+        let replay_position_ms = self
+            .active_runtime_session()
+            .replay
+            .as_ref()
+            .map(ReplayController::position_ms);
         let id = self.next_bookmark_id;
         self.next_bookmark_id = self.next_bookmark_id.saturating_add(1);
-        self.active_runtime_session_mut().meta.bookmarks.push(Bookmark {
-            id,
-            label: format!("{} {}", entry.direction.label(), entry.timestamp),
-            timestamp: entry.timestamp.clone(),
-            source: "log".to_owned(),
-            sequence: None,
-            replay_position_ms,
-            service_uuid: entry.service_uuid.clone(),
-            characteristic_uuid: entry.characteristic_uuid.clone(),
-            hex: format_hex(&entry.data),
-        });
+        self.active_runtime_session_mut()
+            .meta
+            .bookmarks
+            .push(Bookmark {
+                id,
+                label: format!("{} {}", entry.direction.label(), entry.timestamp),
+                timestamp: entry.timestamp.clone(),
+                source: "log".to_owned(),
+                sequence: None,
+                replay_position_ms,
+                service_uuid: entry.service_uuid.clone(),
+                characteristic_uuid: entry.characteristic_uuid.clone(),
+                hex: format_hex(&entry.data),
+            });
     }
 
     fn add_protocol_bookmark(&mut self, frame: &ProtocolFrameEntry) {
-        let replay_position_ms = self.active_runtime_session().replay.as_ref().map(ReplayController::position_ms);
+        let replay_position_ms = self
+            .active_runtime_session()
+            .replay
+            .as_ref()
+            .map(ReplayController::position_ms);
         let id = self.next_bookmark_id;
         self.next_bookmark_id = self.next_bookmark_id.saturating_add(1);
         let service_uuid = self
@@ -1380,17 +1418,20 @@ impl BluetoothMonitorApp {
             .as_ref()
             .map(|key| key.characteristic_uuid.clone())
             .unwrap_or_default();
-        self.active_runtime_session_mut().meta.bookmarks.push(Bookmark {
-            id,
-            label: format!("Protocol frame #{}", frame.sequence),
-            timestamp: frame.timestamp.clone(),
-            source: "protocol".to_owned(),
-            sequence: Some(frame.sequence),
-            replay_position_ms,
-            service_uuid,
-            characteristic_uuid,
-            hex: format_hex(&frame.data),
-        });
+        self.active_runtime_session_mut()
+            .meta
+            .bookmarks
+            .push(Bookmark {
+                id,
+                label: format!("Protocol frame #{}", frame.sequence),
+                timestamp: frame.timestamp.clone(),
+                source: "protocol".to_owned(),
+                sequence: Some(frame.sequence),
+                replay_position_ms,
+                service_uuid,
+                characteristic_uuid,
+                hex: format_hex(&frame.data),
+            });
     }
 
     fn render_workspace_bar(&mut self, ui: &mut egui::Ui) {
@@ -1512,7 +1553,8 @@ impl BluetoothMonitorApp {
                             ui.monospace(&bookmark.hex);
                         }
                         if !bookmark.service_uuid.is_empty() {
-                            ui.label("ⓘ").on_hover_text(format!("Service {}", bookmark.service_uuid));
+                            ui.label("ⓘ")
+                                .on_hover_text(format!("Service {}", bookmark.service_uuid));
                         }
                         if let Some(sequence) = bookmark.sequence {
                             if ui.button(format!("Frame #{sequence}")).clicked() {
@@ -1520,7 +1562,10 @@ impl BluetoothMonitorApp {
                             }
                         }
                         if let Some(offset) = bookmark.replay_position_ms {
-                            if ui.button(format!("Go {}", format_duration(offset))).clicked() {
+                            if ui
+                                .button(format!("Go {}", format_duration(offset)))
+                                .clicked()
+                            {
                                 seek_to = Some(offset);
                             }
                         }
@@ -1603,7 +1648,11 @@ impl BluetoothMonitorApp {
             ui.separator();
 
             if ui
-                .button(if self.scanning { "停止扫描" } else { "开始扫描" })
+                .button(if self.scanning {
+                    "停止扫描"
+                } else {
+                    "开始扫描"
+                })
                 .clicked()
             {
                 if self.scanning {
@@ -1722,7 +1771,11 @@ impl BluetoothMonitorApp {
 
         ui.horizontal(|ui| {
             ui.heading("Devices");
-            ui.label(format!("{} / {} visible", visible_devices.len(), self.devices.len()));
+            ui.label(format!(
+                "{} / {} visible",
+                visible_devices.len(),
+                self.devices.len()
+            ));
         });
         ui.horizontal_wrapped(|ui| {
             ui.label("Name/Address");
@@ -1875,8 +1928,8 @@ impl BluetoothMonitorApp {
                         .default_open(true)
                         .show(ui, |ui| {
                             for characteristic in service.characteristics {
-                                let selected = self.selected_characteristic.as_ref()
-                                    == Some(&characteristic);
+                                let selected =
+                                    self.selected_characteristic.as_ref() == Some(&characteristic);
                                 let label = format!(
                                     "{}   [{}]",
                                     characteristic.key.characteristic_uuid,
@@ -1904,8 +1957,7 @@ impl BluetoothMonitorApp {
                                                 if ui.selectable_label(selected, label).clicked() {
                                                     requested_characteristic =
                                                         Some(characteristic.clone());
-                                                    requested_descriptor =
-                                                        Some(descriptor.clone());
+                                                    requested_descriptor = Some(descriptor.clone());
                                                 }
                                             }
                                         },
@@ -2013,9 +2065,8 @@ impl BluetoothMonitorApp {
         }
 
         let write_supported = can_write_with_response || can_write_without_response;
-        let can_send = connected
-            && write_supported
-            && parsed.as_ref().is_ok_and(|data| !data.is_empty());
+        let can_send =
+            connected && write_supported && parsed.as_ref().is_ok_and(|data| !data.is_empty());
         if ui
             .add_enabled(can_send, egui::Button::new("Send"))
             .clicked()
@@ -2032,7 +2083,9 @@ impl BluetoothMonitorApp {
         }
 
         ui.horizontal_wrapped(|ui| {
-            let changed = ui.checkbox(&mut self.periodic_enabled, "周期发送").changed();
+            let changed = ui
+                .checkbox(&mut self.periodic_enabled, "周期发送")
+                .changed();
             if changed {
                 self.periodic_next = None;
                 self.periodic_sent = 0;
@@ -2115,10 +2168,7 @@ impl BluetoothMonitorApp {
                 .as_ref()
                 .is_ok_and(|data| !data.is_empty());
         if ui
-            .add_enabled(
-                can_write_descriptor,
-                egui::Button::new("Write Descriptor"),
-            )
+            .add_enabled(can_write_descriptor, egui::Button::new("Write Descriptor"))
             .clicked()
         {
             if let Ok(data) = parsed_descriptor {
@@ -2284,8 +2334,7 @@ impl BluetoothMonitorApp {
                 ui.horizontal_wrapped(|ui| {
                     ui.checkbox(&mut channel.config.enabled, "");
                     ui.add(
-                        egui::TextEdit::singleline(&mut channel.config.name)
-                            .desired_width(70.0),
+                        egui::TextEdit::singleline(&mut channel.config.name).desired_width(70.0),
                     );
                     let source = channel
                         .config
@@ -2339,7 +2388,8 @@ impl BluetoothMonitorApp {
                     if !channel.config.enabled || channel.samples.is_empty() {
                         continue;
                     }
-                    let points: egui_plot::PlotPoints<'_> = channel.samples.iter().copied().collect();
+                    let points: egui_plot::PlotPoints<'_> =
+                        channel.samples.iter().copied().collect();
                     plot_ui.line(egui_plot::Line::new(channel.config.name.clone(), points));
                 }
             });
@@ -2410,13 +2460,19 @@ impl BluetoothMonitorApp {
             }
             ui.separator();
             if ui
-                .add_enabled(!self.active_runtime_session().protocol_frames.is_empty(), egui::Button::new("Export CSV"))
+                .add_enabled(
+                    !self.active_runtime_session().protocol_frames.is_empty(),
+                    egui::Button::new("Export CSV"),
+                )
                 .clicked()
             {
                 self.export_protocol_csv();
             }
             if ui
-                .add_enabled(!self.active_runtime_session().protocol_frames.is_empty(), egui::Button::new("Export JSON"))
+                .add_enabled(
+                    !self.active_runtime_session().protocol_frames.is_empty(),
+                    egui::Button::new("Export JSON"),
+                )
                 .clicked()
             {
                 self.export_protocol_json();
@@ -2438,7 +2494,9 @@ impl BluetoothMonitorApp {
             .unwrap_or_else(|| "未选择 Characteristic".to_owned());
         ui.monospace(format!(
             "Source: {source} · buffered {} B · frames {}",
-            self.active_runtime_session().protocol_decoder.buffered_bytes(),
+            self.active_runtime_session()
+                .protocol_decoder
+                .buffered_bytes(),
             self.active_runtime_session().protocol_frames.len()
         ));
 
@@ -2604,7 +2662,8 @@ impl BluetoothMonitorApp {
             .collect::<Vec<_>>();
         ui.label(format!(
             "Decoded frames: {} / {} retained",
-            frames.len(), MAX_PROTOCOL_FRAMES
+            frames.len(),
+            MAX_PROTOCOL_FRAMES
         ));
 
         let mut selected = self.selected_protocol_frame_sequence;
@@ -2616,11 +2675,18 @@ impl BluetoothMonitorApp {
                 for row in row_range {
                     let frame = &frames[row];
                     ui.horizontal_wrapped(|ui| {
-                        if ui.small_button("☆").on_hover_text("Bookmark frame").clicked() {
+                        if ui
+                            .small_button("☆")
+                            .on_hover_text("Bookmark frame")
+                            .clicked()
+                        {
                             bookmark = Some(frame.clone());
                         }
                         if ui
-                            .selectable_label(selected == Some(frame.sequence), format!("#{:<6}", frame.sequence))
+                            .selectable_label(
+                                selected == Some(frame.sequence),
+                                format!("#{:<6}", frame.sequence),
+                            )
                             .clicked()
                         {
                             selected = Some(frame.sequence);
@@ -2668,7 +2734,10 @@ impl BluetoothMonitorApp {
             if ui.button("Open .bmon").clicked() {
                 self.open_replay();
             }
-            if has_replay && session_index != self.live_session && ui.button("Close Session").clicked() {
+            if has_replay
+                && session_index != self.live_session
+                && ui.button("Close Session").clicked()
+            {
                 close_session = true;
             }
         });
@@ -2797,7 +2866,9 @@ impl BluetoothMonitorApp {
                 .to_ascii_lowercase()
                 .contains(query)
             || format_hex(&entry.data).to_ascii_lowercase().contains(query)
-            || format_ascii(&entry.data).to_ascii_lowercase().contains(query)
+            || format_ascii(&entry.data)
+                .to_ascii_lowercase()
+                .contains(query)
     }
 }
 
@@ -2899,7 +2970,6 @@ impl eframe::App for BluetoothMonitorApp {
         let _ = self.commands.send(BleCommand::Shutdown);
     }
 }
-
 
 #[cfg(test)]
 mod tests {

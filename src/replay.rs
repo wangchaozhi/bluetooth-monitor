@@ -270,5 +270,4 @@ mod tests {
         assert_eq!(controller.next_event(), Some(1_000));
         assert_eq!(controller.previous_event(), Some(0));
     }
-
 }

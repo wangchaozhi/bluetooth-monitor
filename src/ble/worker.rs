@@ -19,8 +19,8 @@ use tokio::{
     task::JoinHandle,
     time::{Instant, sleep_until},
 };
-use uuid::Uuid;
 use tracing::{debug, info, warn};
+use uuid::Uuid;
 
 const CONNECT_TIMEOUT: Duration = Duration::from_secs(15);
 const MAX_RECONNECT_DELAY_MS: u64 = 10_000;
@@ -1038,7 +1038,6 @@ fn central_state_label(state: &CentralState) -> &'static str {
     }
 }
 
-
 fn parse_scan_services(values: &[String]) -> Result<Vec<Uuid>> {
     values
         .iter()
@@ -1048,7 +1047,10 @@ fn parse_scan_services(values: &[String]) -> Result<Vec<Uuid>> {
 }
 
 fn parse_ble_uuid(value: &str) -> Result<Uuid> {
-    let compact = value.trim().trim_start_matches("0x").trim_start_matches("0X");
+    let compact = value
+        .trim()
+        .trim_start_matches("0x")
+        .trim_start_matches("0X");
     match compact.len() {
         4 if compact.chars().all(|ch| ch.is_ascii_hexdigit()) => {
             let value = u16::from_str_radix(compact, 16)
@@ -1079,18 +1081,12 @@ mod tests {
     #[test]
     fn parses_short_and_full_scan_uuids() {
         let short = parse_ble_uuid("180D").unwrap();
-        assert_eq!(
-            short.to_string(),
-            "0000180d-0000-1000-8000-00805f9b34fb"
-        );
+        assert_eq!(short.to_string(), "0000180d-0000-1000-8000-00805f9b34fb");
 
         let full = parse_ble_uuid("0000180d-0000-1000-8000-00805f9b34fb").unwrap();
         assert_eq!(short, full);
 
         let short32 = parse_ble_uuid("12345678").unwrap();
-        assert_eq!(
-            short32.to_string(),
-            "12345678-0000-1000-8000-00805f9b34fb"
-        );
+        assert_eq!(short32.to_string(), "12345678-0000-1000-8000-00805f9b34fb");
     }
 }

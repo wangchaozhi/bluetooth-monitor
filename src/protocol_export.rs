@@ -1,6 +1,11 @@
 use anyhow::{Context, Result};
 use serde::Serialize;
-use std::{collections::{BTreeMap, BTreeSet}, fs::File, io::BufWriter, path::Path};
+use std::{
+    collections::{BTreeMap, BTreeSet},
+    fs::File,
+    io::BufWriter,
+    path::Path,
+};
 
 #[derive(Debug, Clone, Serialize)]
 pub struct ProtocolExportFrame {
@@ -36,7 +41,9 @@ pub fn export_csv(path: impl AsRef<Path>, frames: &[ProtocolExportFrame]) -> Res
         "hex".to_owned(),
     ];
     header.extend(field_names.iter().cloned());
-    writer.write_record(&header).context("写入协议 CSV 表头失败")?;
+    writer
+        .write_record(&header)
+        .context("写入协议 CSV 表头失败")?;
 
     for frame in frames {
         let mut row = vec![

@@ -1,5 +1,5 @@
 use crate::plotting::PlotValueType;
-use crc::{Crc, CRC_16_IBM_SDLC, CRC_16_MODBUS, CRC_16_XMODEM, CRC_8_SMBUS};
+use crc::{CRC_8_SMBUS, CRC_16_IBM_SDLC, CRC_16_MODBUS, CRC_16_XMODEM, Crc};
 use serde::{Deserialize, Serialize};
 use std::collections::VecDeque;
 
@@ -32,8 +32,13 @@ impl Endian {
 #[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize)]
 pub enum FrameMode {
     BlePacket,
-    FixedLength { length: usize },
-    Delimiter { delimiter: Vec<u8>, include: bool },
+    FixedLength {
+        length: usize,
+    },
+    Delimiter {
+        delimiter: Vec<u8>,
+        include: bool,
+    },
     LengthField {
         offset: usize,
         width: usize,
@@ -404,18 +409,16 @@ fn read_unsigned(bytes: &[u8], endian: Endian) -> u64 {
         (1, _) => bytes[0] as u64,
         (2, Endian::Little) => u16::from_le_bytes([bytes[0], bytes[1]]) as u64,
         (2, Endian::Big) => u16::from_be_bytes([bytes[0], bytes[1]]) as u64,
-        (4, Endian::Little) => {
-            u32::from_le_bytes([bytes[0], bytes[1], bytes[2], bytes[3]]) as u64
-        }
-        (4, Endian::Big) => {
-            u32::from_be_bytes([bytes[0], bytes[1], bytes[2], bytes[3]]) as u64
-        }
+        (4, Endian::Little) => u32::from_le_bytes([bytes[0], bytes[1], bytes[2], bytes[3]]) as u64,
+        (4, Endian::Big) => u32::from_be_bytes([bytes[0], bytes[1], bytes[2], bytes[3]]) as u64,
         _ => 0,
     }
 }
 
 fn find_subslice(haystack: &[u8], needle: &[u8]) -> Option<usize> {
-    haystack.windows(needle.len()).position(|window| window == needle)
+    haystack
+        .windows(needle.len())
+        .position(|window| window == needle)
 }
 
 #[cfg(test)]
@@ -473,7 +476,6 @@ mod tests {
         assert_eq!(frames[1].data, vec![4, 1, 2, 3]);
     }
 
-
     #[test]
     fn delimiter_can_span_notifications() {
         let mut decoder = StreamProtocolDecoder::default();
@@ -516,6 +518,9 @@ mod tests {
         let mut frame = b"123456789".to_vec();
         let crc = Crc::<u16>::new(&CRC_16_MODBUS).checksum(&frame);
         frame.extend_from_slice(&crc.to_le_bytes());
-        assert_eq!(validate_crc(&frame, CrcMode::Crc16ModbusLeTail), CrcStatus::Valid);
+        assert_eq!(
+            validate_crc(&frame, CrcMode::Crc16ModbusLeTail),
+            CrcStatus::Valid
+        );
     }
 }

@@ -61,12 +61,7 @@ impl PlotValueType {
         match self {
             Self::U8 | Self::I8 => 1,
             Self::U16Le | Self::U16Be | Self::I16Le | Self::I16Be => 2,
-            Self::U32Le
-            | Self::U32Be
-            | Self::I32Le
-            | Self::I32Be
-            | Self::F32Le
-            | Self::F32Be => 4,
+            Self::U32Le | Self::U32Be | Self::I32Le | Self::I32Be | Self::F32Le | Self::F32Be => 4,
         }
     }
 }
@@ -173,8 +168,14 @@ mod tests {
 
     #[test]
     fn decodes_integer_endianness() {
-        assert_eq!(decode_value(&[0x34, 0x12], 0, PlotValueType::U16Le), Some(0x1234 as f64));
-        assert_eq!(decode_value(&[0x12, 0x34], 0, PlotValueType::U16Be), Some(0x1234 as f64));
+        assert_eq!(
+            decode_value(&[0x34, 0x12], 0, PlotValueType::U16Le),
+            Some(0x1234 as f64)
+        );
+        assert_eq!(
+            decode_value(&[0x12, 0x34], 0, PlotValueType::U16Be),
+            Some(0x1234 as f64)
+        );
     }
 
     #[test]

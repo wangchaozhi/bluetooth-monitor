@@ -1,4 +1,7 @@
-use crate::{plotting::PlotValueType, protocol::{CrcMode, Endian, FieldDefinition, FrameMode, ProtocolConfig}};
+use crate::{
+    plotting::PlotValueType,
+    protocol::{CrcMode, Endian, FieldDefinition, FrameMode, ProtocolConfig},
+};
 use anyhow::{Context, Result};
 use chrono::Local;
 use serde::{Deserialize, Serialize};
@@ -64,7 +67,11 @@ fn load_custom() -> Result<Vec<StoredProtocolPreset>> {
         let bytes = fs::read(&path).with_context(|| format!("无法读取 {}", path.display()))?;
         let preset = serde_json::from_slice::<ProtocolPreset>(&bytes)
             .with_context(|| format!("无法解析 {}", path.display()))?;
-        result.push(StoredProtocolPreset { preset, path: Some(path), built_in: false });
+        result.push(StoredProtocolPreset {
+            preset,
+            path: Some(path),
+            built_in: false,
+        });
     }
     result.sort_by(|left, right| left.preset.name.cmp(&right.preset.name));
     Ok(result)
@@ -78,11 +85,19 @@ fn default_dir() -> Result<PathBuf> {
 
 fn built_in_presets() -> Vec<ProtocolPreset> {
     vec![
-        preset("Raw BLE packet", "每个 Notification 作为一帧", FrameMode::BlePacket, CrcMode::None),
+        preset(
+            "Raw BLE packet",
+            "每个 Notification 作为一帧",
+            FrameMode::BlePacket,
+            CrcMode::None,
+        ),
         preset(
             "CRLF text lines",
             "以 0D 0A 分隔文本/ASCII 数据",
-            FrameMode::Delimiter { delimiter: vec![0x0D, 0x0A], include: false },
+            FrameMode::Delimiter {
+                delimiter: vec![0x0D, 0x0A],
+                include: false,
+            },
             CrcMode::None,
         ),
         preset(
@@ -94,12 +109,18 @@ fn built_in_presets() -> Vec<ProtocolPreset> {
         preset(
             "u8 length prefix",
             "首字节是总帧长度",
-            FrameMode::LengthField { offset: 0, width: 1, endian: Endian::Little, adjustment: 0 },
+            FrameMode::LengthField {
+                offset: 0,
+                width: 1,
+                endian: Endian::Little,
+                adjustment: 0,
+            },
             CrcMode::None,
         ),
         ProtocolPreset {
             name: "Modbus RTU in BLE packet".to_owned(),
-            description: "一个 BLE Notification 对应一个 Modbus RTU 帧，尾部 CRC16/MODBUS LE".to_owned(),
+            description: "一个 BLE Notification 对应一个 Modbus RTU 帧，尾部 CRC16/MODBUS LE"
+                .to_owned(),
             config: ProtocolConfig {
                 enabled: true,
                 frame_mode: FrameMode::BlePacket,
@@ -143,10 +164,20 @@ fn preset(name: &str, description: &str, frame_mode: FrameMode, crc: CrcMode) ->
 fn sanitize_file_name(input: &str) -> String {
     let sanitized = input
         .chars()
-        .map(|ch| if ch.is_ascii_alphanumeric() || matches!(ch, '-' | '_' | '.') { ch } else { '_' })
+        .map(|ch| {
+            if ch.is_ascii_alphanumeric() || matches!(ch, '-' | '_' | '.') {
+                ch
+            } else {
+                '_'
+            }
+        })
         .collect::<String>();
     let trimmed = sanitized.trim_matches('_');
-    if trimmed.is_empty() { "preset".to_owned() } else { trimmed.to_owned() }
+    if trimmed.is_empty() {
+        "preset".to_owned()
+    } else {
+        trimmed.to_owned()
+    }
 }
 
 #[cfg(test)]

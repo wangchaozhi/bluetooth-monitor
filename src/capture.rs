@@ -67,14 +67,16 @@ impl CaptureSession {
         fs::create_dir_all(directory)
             .with_context(|| format!("无法创建捕获目录 {}", directory.display()))?;
 
-        let stem = Local::now().format("bluetooth_%Y%m%d_%H%M%S_%3f").to_string();
+        let stem = Local::now()
+            .format("bluetooth_%Y%m%d_%H%M%S_%3f")
+            .to_string();
         let csv_path = directory.join(format!("{stem}.csv"));
         let raw_path = directory.join(format!("{stem}.bmon"));
 
-        let csv_file = File::create(&csv_path)
-            .with_context(|| format!("无法创建 {}", csv_path.display()))?;
-        let raw_file = File::create(&raw_path)
-            .with_context(|| format!("无法创建 {}", raw_path.display()))?;
+        let csv_file =
+            File::create(&csv_path).with_context(|| format!("无法创建 {}", csv_path.display()))?;
+        let raw_file =
+            File::create(&raw_path).with_context(|| format!("无法创建 {}", raw_path.display()))?;
 
         let mut raw = BufWriter::new(raw_file);
         raw.write_all(RAW_MAGIC).context("写入 BMON 文件头失败")?;
@@ -196,15 +198,15 @@ fn write_raw_string(writer: &mut impl Write, value: &str) -> Result<()> {
     writer
         .write_all(&length.to_le_bytes())
         .context("写入 BMON 字符串长度失败")?;
-    writer
-        .write_all(bytes)
-        .context("写入 BMON 字符串失败")?;
+    writer.write_all(bytes).context("写入 BMON 字符串失败")?;
     Ok(())
 }
 
 fn read_raw_string_or_eof(reader: &mut impl Read) -> Result<Option<String>> {
     let mut length = [0u8; 2];
-    let first = reader.read(&mut length[..1]).context("读取 BMON 字段失败")?;
+    let first = reader
+        .read(&mut length[..1])
+        .context("读取 BMON 字段失败")?;
     if first == 0 {
         return Ok(None);
     }
