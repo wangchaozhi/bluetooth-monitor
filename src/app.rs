@@ -464,7 +464,7 @@ impl BluetoothMonitorApp {
                 } => {
                     self.connection_phase = ConnectionPhase::Connected;
                     self.target_id = Some(peripheral_id.clone());
-                    self.connected_id = Some(peripheral_id);
+                    self.connected_id = Some(peripheral_id.clone());
                     self.connected_name = Some(name.clone());
                     if let Some(session) = self.sessions.get_mut(self.live_session) {
                         session.meta.device_id = Some(peripheral_id.clone());
@@ -2901,7 +2901,7 @@ impl eframe::App for BluetoothMonitorApp {
         self.tick_replay(ui.ctx());
         ui.ctx().request_repaint_after(Duration::from_millis(100));
 
-        egui::CentralPanel::default().show_inside(ui, |ui| {
+        egui::CentralPanel::default().show(ui, |ui| {
             self.render_toolbar(ui);
             ui.separator();
             self.render_workspace_bar(ui);
