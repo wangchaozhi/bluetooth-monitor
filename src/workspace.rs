@@ -27,6 +27,7 @@ impl SessionKind {
 
 #[derive(Debug, Clone, Serialize, Deserialize, PartialEq, Eq)]
 #[serde(default)]
+#[derive(Default)]
 pub struct Bookmark {
     pub id: u64,
     pub label: String,
@@ -37,22 +38,6 @@ pub struct Bookmark {
     pub service_uuid: String,
     pub characteristic_uuid: String,
     pub hex: String,
-}
-
-impl Default for Bookmark {
-    fn default() -> Self {
-        Self {
-            id: 0,
-            label: String::new(),
-            timestamp: String::new(),
-            source: String::new(),
-            sequence: None,
-            replay_position_ms: None,
-            service_uuid: String::new(),
-            characteristic_uuid: String::new(),
-            hex: String::new(),
-        }
-    }
 }
 
 #[derive(Debug, Clone, Serialize, Deserialize, PartialEq, Eq)]

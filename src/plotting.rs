@@ -2,8 +2,9 @@ use crate::ble::model::CharacteristicKey;
 use serde::{Deserialize, Serialize};
 use std::collections::VecDeque;
 
-#[derive(Debug, Clone, Copy, PartialEq, Eq, Serialize, Deserialize)]
+#[derive(Debug, Clone, Copy, PartialEq, Eq, Serialize, Deserialize, Default)]
 pub enum PlotValueType {
+    #[default]
     U8,
     I8,
     U16Le,
@@ -16,12 +17,6 @@ pub enum PlotValueType {
     I32Be,
     F32Le,
     F32Be,
-}
-
-impl Default for PlotValueType {
-    fn default() -> Self {
-        Self::U8
-    }
 }
 
 impl PlotValueType {

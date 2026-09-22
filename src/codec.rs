@@ -25,7 +25,7 @@ pub fn parse_hex(input: &str) -> Result<Vec<u8>, HexError> {
     let mut output = Vec::with_capacity(compact.len() / 2);
     let bytes = compact.as_bytes();
 
-    for pair in bytes.chunks_exact(2) {
+    for pair in bytes.as_chunks::<2>().0 {
         let token = std::str::from_utf8(pair).expect("HEX 输入应为 ASCII");
         let value =
             u8::from_str_radix(token, 16).map_err(|_| HexError::InvalidByte(token.to_owned()))?;

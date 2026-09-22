@@ -2,6 +2,7 @@ mod app;
 mod ble;
 mod capture;
 mod codec;
+mod i18n;
 mod plotting;
 pub mod plugin;
 mod profile;

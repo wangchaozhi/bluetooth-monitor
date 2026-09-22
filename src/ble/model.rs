@@ -229,7 +229,7 @@ pub enum BleEvent {
         data: Vec<u8>,
         timestamp: String,
     },
-    Status(String),
+    Status(crate::i18n::LocalizedText),
     Error(String),
     Fatal(String),
 }

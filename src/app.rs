@@ -1,3 +1,4 @@
+use crate::i18n::{self, Language, LocalizedText};
 use crate::{
     ble::model::{
         AdapterInfo, BleCommand, BleEvent, CharacteristicInfo, CharacteristicKey, DescriptorInfo,
@@ -34,6 +35,7 @@ const PREFERENCES_KEY: &str = "bluetooth-monitor.preferences";
 #[derive(Debug, Clone, Serialize, Deserialize)]
 #[serde(default)]
 struct AppPreferences {
+    language: Language,
     auto_scroll: bool,
     show_ascii: bool,
     write_with_response: bool,
@@ -54,6 +56,7 @@ struct AppPreferences {
 impl Default for AppPreferences {
     fn default() -> Self {
         Self {
+            language: Language::default(),
             auto_scroll: true,
             show_ascii: true,
             write_with_response: true,
@@ -211,14 +214,15 @@ impl RuntimeSession {
 }
 
 pub struct BluetoothMonitorApp {
+    language: Language,
     commands: UnboundedSender<BleCommand>,
     events: Receiver<BleEvent>,
 
     adapters: Vec<AdapterInfo>,
     selected_adapter: usize,
     adapter_state: String,
-    status: String,
-    last_error: Option<String>,
+    status: LocalizedText,
+    last_error: Option<LocalizedText>,
 
     scanning: bool,
     scan_name_filter: String,
@@ -281,7 +285,7 @@ pub struct BluetoothMonitorApp {
 
     capture: Option<CaptureSession>,
     last_capture_paths: Option<CapturePaths>,
-    capture_error: Option<String>,
+    capture_error: Option<LocalizedText>,
 }
 
 impl BluetoothMonitorApp {
@@ -291,23 +295,26 @@ impl BluetoothMonitorApp {
         events: Receiver<BleEvent>,
     ) -> Self {
         cc.egui_ctx.set_zoom_factor(1.0);
+        i18n::install_fonts(&cc.egui_ctx);
         let preferences = cc
             .storage
             .and_then(|storage| eframe::get_value::<AppPreferences>(storage, PREFERENCES_KEY))
             .unwrap_or_default();
 
+        let language = preferences.language;
         let _ = commands.send(BleCommand::SetAutoReconnect {
             enabled: preferences.auto_reconnect,
         });
         let profiles = profile::load_profiles().unwrap_or_default();
 
         Self {
+            language,
             commands,
             events,
             adapters: Vec::new(),
             selected_adapter: 0,
             adapter_state: "Unknown".to_owned(),
-            status: "等待 Bluetooth Worker".to_owned(),
+            status: LocalizedText::new("等待 Bluetooth Worker", &[]),
             last_error: None,
             scanning: false,
             scan_name_filter: preferences.scan_name_filter,
@@ -378,7 +385,7 @@ impl BluetoothMonitorApp {
 
     fn send(&mut self, command: BleCommand) {
         if self.commands.send(command).is_err() {
-            self.last_error = Some("Bluetooth Worker 已停止".to_owned());
+            self.last_error = Some(LocalizedText::new("Bluetooth Worker 已停止", &[]));
         }
     }
 
@@ -395,15 +402,21 @@ impl BluetoothMonitorApp {
                     self.selected_adapter = selected_adapter;
                     if let Some(adapter) = self.adapters.get(selected_adapter) {
                         self.adapter_state = adapter.state.clone();
-                        self.status = format!("Bluetooth 已就绪：{}", adapter.name);
+                        self.status = LocalizedText::new(
+                            "Bluetooth 已就绪：{}",
+                            std::slice::from_ref(&adapter.name),
+                        );
                     } else {
-                        self.status = "Bluetooth 已就绪".to_owned();
+                        self.status = LocalizedText::new("Bluetooth 已就绪", &[]);
                     }
                 }
                 BleEvent::AdapterSelected { adapter } => {
                     self.selected_adapter = adapter.index;
                     self.adapter_state = adapter.state;
-                    self.status = format!("已切换 Adapter：{}", adapter.name);
+                    self.status = LocalizedText::new(
+                        "已切换 Adapter：{}",
+                        std::slice::from_ref(&adapter.name),
+                    );
                     self.connection_phase = ConnectionPhase::Disconnected;
                     self.reset_connection_view(true);
                 }
@@ -416,12 +429,15 @@ impl BluetoothMonitorApp {
                 }
                 BleEvent::ScanStarted => {
                     self.scanning = true;
-                    self.status = "正在实时扫描 BLE 设备…".to_owned();
+                    self.status = LocalizedText::new("正在实时扫描 BLE 设备…", &[]);
                     self.last_error = None;
                 }
                 BleEvent::ScanStopped => {
                     self.scanning = false;
-                    self.status = format!("扫描已停止：{} 个设备", self.devices.len());
+                    self.status = LocalizedText::new(
+                        "扫描已停止：{} 个设备",
+                        &[self.devices.len().to_string()],
+                    );
                 }
                 BleEvent::DeviceUpsert { device } => {
                     self.upsert_device(device);
@@ -452,9 +468,15 @@ impl BluetoothMonitorApp {
                     };
                     self.last_error = None;
                     self.status = if reconnect {
-                        format!("自动重连 #{attempt}：{peripheral_id}")
+                        LocalizedText::new(
+                            "自动重连 #{attempt}：{peripheral_id}",
+                            &[attempt.to_string(), peripheral_id.to_string()],
+                        )
                     } else {
-                        format!("正在连接 {peripheral_id}")
+                        LocalizedText::new(
+                            "正在连接 {peripheral_id}",
+                            std::slice::from_ref(&peripheral_id),
+                        )
                     };
                 }
                 BleEvent::Connected {
@@ -473,12 +495,16 @@ impl BluetoothMonitorApp {
                     }
                     self.mtu = Some(mtu);
                     self.last_error = None;
-                    self.status = format!("已连接 {name} · MTU {mtu}");
+                    self.status = LocalizedText::new(
+                        "已连接 {name} · MTU {mtu}",
+                        &[name.to_string(), mtu.to_string()],
+                    );
                 }
                 BleEvent::Disconnected {
-                    peripheral_id: _,
+                    peripheral_id,
                     unexpected,
                 } => {
+                    tracing::debug!(?peripheral_id, unexpected, "BLE disconnected");
                     self.connected_id = None;
                     self.mtu = None;
                     if unexpected {
@@ -487,37 +513,49 @@ impl BluetoothMonitorApp {
                         } else {
                             ConnectionPhase::Disconnected
                         };
-                        self.status = "连接意外断开".to_owned();
+                        self.status = LocalizedText::new("连接意外断开", &[]);
                     } else {
                         self.connection_phase = ConnectionPhase::Disconnected;
                         self.target_id = None;
                         self.reset_connection_view(true);
-                        self.status = "已断开".to_owned();
+                        self.status = LocalizedText::new("已断开", &[]);
                     }
                 }
                 BleEvent::ReconnectScheduled { attempt, delay_ms } => {
                     self.connection_phase = ConnectionPhase::Reconnecting;
-                    self.status = format!(
+                    self.status = LocalizedText::new(
                         "将在 {:.1}s 后进行第 {attempt} 次重连",
-                        delay_ms as f32 / 1000.0
+                        &[
+                            format!("{:.1}", delay_ms as f32 / 1000.0),
+                            attempt.to_string(),
+                        ],
                     );
                 }
                 BleEvent::ReconnectFailed { attempt, error } => {
                     self.connection_phase = ConnectionPhase::Reconnecting;
-                    self.last_error = Some(format!("重连 #{attempt} 失败：{error}"));
+                    self.last_error = Some(LocalizedText::new(
+                        "重连 #{attempt} 失败：{error}",
+                        &[attempt.to_string(), error.to_string()],
+                    ));
                 }
                 BleEvent::GattDiscovered { snapshot } => {
                     self.gatt = snapshot;
-                    self.status = format!("GATT：{} 个 Service", self.gatt.services.len());
-                    if let Some(key) = self.pending_profile_characteristic.take() {
-                        if let Some(characteristic) = self.find_characteristic_info(&key) {
-                            self.selected_characteristic = Some(characteristic);
-                        }
+                    self.status = LocalizedText::new(
+                        "GATT：{} 个 Service",
+                        &[self.gatt.services.len().to_string()],
+                    );
+                    if let Some(key) = self.pending_profile_characteristic.take()
+                        && let Some(characteristic) = self.find_characteristic_info(&key)
+                    {
+                        self.selected_characteristic = Some(characteristic);
                     }
                     self.send(BleCommand::SubscribeAll);
                 }
                 BleEvent::Subscribed { characteristic } => {
-                    self.status = format!("已订阅 {}", characteristic.characteristic_uuid);
+                    self.status = LocalizedText::new(
+                        "已订阅 {}",
+                        std::slice::from_ref(&characteristic.characteristic_uuid),
+                    );
                 }
                 BleEvent::Notification {
                     characteristic,
@@ -592,13 +630,13 @@ impl BluetoothMonitorApp {
                 }
                 BleEvent::Status(status) => self.status = status,
                 BleEvent::Error(error) => {
-                    self.last_error = Some(error);
+                    self.last_error = Some(error.into());
                 }
                 BleEvent::Fatal(error) => {
                     self.scanning = false;
                     self.connection_phase = ConnectionPhase::Disconnected;
-                    self.status = "Bluetooth Worker 已停止".to_owned();
-                    self.last_error = Some(error);
+                    self.status = LocalizedText::new("Bluetooth Worker 已停止", &[]);
+                    self.last_error = Some(error.into());
                 }
             }
         }
@@ -692,7 +730,10 @@ impl BluetoothMonitorApp {
                 capture.write(record).err()
             });
             if let Some(error) = capture_error {
-                self.capture_error = Some(format!("捕获写入失败：{error:#}"));
+                self.capture_error = Some(LocalizedText::new(
+                    "捕获写入失败：{error:#}",
+                    &[format!("{:#}", error)],
+                ));
                 self.capture = None;
             }
         }
@@ -846,10 +887,13 @@ impl BluetoothMonitorApp {
                 }
                 self.capture = Some(session);
                 self.capture_error = None;
-                self.status = "已开始 CSV + BMON 捕获".to_owned();
+                self.status = LocalizedText::new("已开始 CSV + BMON 捕获", &[]);
             }
             Err(error) => {
-                self.capture_error = Some(format!("无法开始捕获：{error:#}"));
+                self.capture_error = Some(LocalizedText::new(
+                    "无法开始捕获：{error:#}",
+                    &[format!("{:#}", error)],
+                ));
             }
         }
     }
@@ -859,10 +903,14 @@ impl BluetoothMonitorApp {
             let records = capture.records();
             match capture.flush() {
                 Ok(()) => {
-                    self.status = format!("捕获已保存：{records} records");
+                    self.status =
+                        LocalizedText::new("捕获已保存：{records} records", &[records.to_string()]);
                 }
                 Err(error) => {
-                    self.capture_error = Some(format!("刷新捕获文件失败：{error:#}"));
+                    self.capture_error = Some(LocalizedText::new(
+                        "刷新捕获文件失败：{error:#}",
+                        &[format!("{:#}", error)],
+                    ));
                 }
             }
         }
@@ -883,8 +931,9 @@ impl BluetoothMonitorApp {
     }
 
     fn open_replay(&mut self) {
+        let language = self.language;
         let Some(path) = rfd::FileDialog::new()
-            .add_filter("Bluetooth Monitor capture", &["bmon"])
+            .add_filter(language.text("Bluetooth Monitor capture"), &["bmon"])
             .pick_file()
         else {
             return;
@@ -900,10 +949,16 @@ impl BluetoothMonitorApp {
                     .push(RuntimeSession::replay(id, path.clone(), replay));
                 self.active_session = self.sessions.len() - 1;
                 self.clear_plot_samples();
-                self.status = format!("已载入 {count} 条回放记录：{}", path.display());
+                self.status = LocalizedText::new(
+                    "已载入 {count} 条回放记录：{}",
+                    &[count.to_string(), path.display().to_string()],
+                );
             }
             Err(error) => {
-                self.last_error = Some(format!("无法读取 BMON：{error:#}"));
+                self.last_error = Some(LocalizedText::new(
+                    "无法读取 BMON：{error:#}",
+                    &[format!("{:#}", error)],
+                ));
             }
         }
     }
@@ -1025,8 +1080,16 @@ impl BluetoothMonitorApp {
         };
         let frames = self.protocol_export_frames();
         match protocol_export::export_csv(&path, &frames) {
-            Ok(()) => self.status = format!("协议字段 CSV 已导出：{}", path.display()),
-            Err(error) => self.last_error = Some(format!("导出协议 CSV 失败：{error:#}")),
+            Ok(()) => {
+                self.status =
+                    LocalizedText::new("协议字段 CSV 已导出：{}", &[path.display().to_string()])
+            }
+            Err(error) => {
+                self.last_error = Some(LocalizedText::new(
+                    "导出协议 CSV 失败：{error:#}",
+                    &[format!("{:#}", error)],
+                ))
+            }
         }
     }
 
@@ -1040,8 +1103,16 @@ impl BluetoothMonitorApp {
         };
         let frames = self.protocol_export_frames();
         match protocol_export::export_json(&path, &frames) {
-            Ok(()) => self.status = format!("协议字段 JSON 已导出：{}", path.display()),
-            Err(error) => self.last_error = Some(format!("导出协议 JSON 失败：{error:#}")),
+            Ok(()) => {
+                self.status =
+                    LocalizedText::new("协议字段 JSON 已导出：{}", &[path.display().to_string()])
+            }
+            Err(error) => {
+                self.last_error = Some(LocalizedText::new(
+                    "导出协议 JSON 失败：{error:#}",
+                    &[format!("{:#}", error)],
+                ))
+            }
         }
     }
 
@@ -1057,7 +1128,10 @@ impl BluetoothMonitorApp {
             _ => self.protocol_delimiter_hex.clone(),
         };
         self.reset_active_protocol();
-        self.status = format!("已应用协议预设：{}", stored.preset.name);
+        self.status = LocalizedText::new(
+            "已应用协议预设：{}",
+            std::slice::from_ref(&stored.preset.name),
+        );
     }
 
     fn save_protocol_preset(&mut self) {
@@ -1080,10 +1154,14 @@ impl BluetoothMonitorApp {
                     .iter()
                     .position(|stored| stored.path.as_ref() == Some(&path));
                 self.protocol_preset_name = name;
-                self.status = format!("协议预设已保存：{}", path.display());
+                self.status =
+                    LocalizedText::new("协议预设已保存：{}", &[path.display().to_string()]);
             }
             Err(error) => {
-                self.last_error = Some(format!("保存协议预设失败：{error:#}"));
+                self.last_error = Some(LocalizedText::new(
+                    "保存协议预设失败：{error:#}",
+                    &[format!("{:#}", error)],
+                ));
             }
         }
     }
@@ -1132,10 +1210,14 @@ impl BluetoothMonitorApp {
                 self.profiles = profile::load_profiles().unwrap_or_default();
                 self.selected_profile_index =
                     self.profiles.iter().position(|stored| stored.path == path);
-                self.status = format!("Profile 已保存：{}", path.display());
+                self.status =
+                    LocalizedText::new("Profile 已保存：{}", &[path.display().to_string()]);
             }
             Err(error) => {
-                self.last_error = Some(format!("保存 Profile 失败：{error:#}"));
+                self.last_error = Some(LocalizedText::new(
+                    "保存 Profile 失败：{error:#}",
+                    &[format!("{:#}", error)],
+                ));
             }
         }
     }
@@ -1184,14 +1266,14 @@ impl BluetoothMonitorApp {
             self.selected_device_id = Some(device.id.clone());
         }
 
-        if let Some(key) = profile.characteristic {
-            if let Some(characteristic) = self.find_characteristic_info(&key) {
-                self.selected_characteristic = Some(characteristic);
-                self.pending_profile_characteristic = None;
-            }
+        if let Some(key) = profile.characteristic
+            && let Some(characteristic) = self.find_characteristic_info(&key)
+        {
+            self.selected_characteristic = Some(characteristic);
+            self.pending_profile_characteristic = None;
         }
 
-        self.status = format!("已加载 Profile：{}", profile.name);
+        self.status = LocalizedText::new("已加载 Profile：{}", std::slice::from_ref(&profile.name));
     }
 
     fn ensure_live_session_for_device(&mut self, device_id: &str, device_name: Option<&str>) {
@@ -1250,21 +1332,26 @@ impl BluetoothMonitorApp {
         match workspace::save_workspace(&path, &snapshot) {
             Ok(()) => {
                 self.workspace_path = Some(path.clone());
-                self.status = format!("Workspace 已保存：{}", path.display());
+                self.status =
+                    LocalizedText::new("Workspace 已保存：{}", &[path.display().to_string()]);
             }
-            Err(error) => self.last_error = Some(format!("保存 Workspace 失败：{error:#}")),
+            Err(error) => {
+                self.last_error = Some(LocalizedText::new(
+                    "保存 Workspace 失败：{error:#}",
+                    &[format!("{:#}", error)],
+                ))
+            }
         }
     }
 
     fn save_workspace(&mut self, force_dialog: bool) {
-        if !force_dialog {
-            if let Some(path) = self.workspace_path.clone() {
-                self.save_workspace_to(path);
-                return;
-            }
+        let language = self.language;
+        if !force_dialog && let Some(path) = self.workspace_path.clone() {
+            self.save_workspace_to(path);
+            return;
         }
         let Some(path) = rfd::FileDialog::new()
-            .add_filter("Bluetooth Monitor workspace", &["json"])
+            .add_filter(language.text("Bluetooth Monitor workspace"), &["json"])
             .set_file_name("bluetooth-workspace.bmw.json")
             .save_file()
         else {
@@ -1274,15 +1361,21 @@ impl BluetoothMonitorApp {
     }
 
     fn open_workspace(&mut self) {
+        let language = self.language;
         let Some(path) = rfd::FileDialog::new()
-            .add_filter("Bluetooth Monitor workspace", &["json"])
+            .add_filter(language.text("Bluetooth Monitor workspace"), &["json"])
             .pick_file()
         else {
             return;
         };
         match workspace::load_workspace(&path) {
             Ok(file) => self.apply_workspace(path, file),
-            Err(error) => self.last_error = Some(format!("打开 Workspace 失败：{error:#}")),
+            Err(error) => {
+                self.last_error = Some(LocalizedText::new(
+                    "打开 Workspace 失败：{error:#}",
+                    &[format!("{:#}", error)],
+                ))
+            }
         }
     }
 
@@ -1353,9 +1446,12 @@ impl BluetoothMonitorApp {
         self.selected_protocol_frame_sequence = None;
         self.clear_plot_samples();
         self.status = if saved_at.is_empty() {
-            format!("Workspace 已打开：{}", path.display())
+            LocalizedText::new("Workspace 已打开：{}", &[path.display().to_string()])
         } else {
-            format!("Workspace 已打开：{} · saved {saved_at}", path.display())
+            LocalizedText::new(
+                "Workspace 已打开：{} · saved {saved_at}",
+                &[path.display().to_string(), saved_at.to_string()],
+            )
         };
     }
 
@@ -1435,16 +1531,17 @@ impl BluetoothMonitorApp {
     }
 
     fn render_workspace_bar(&mut self, ui: &mut egui::Ui) {
+        let language = self.language;
         ui.horizontal_wrapped(|ui| {
-            ui.strong("Workspace");
+            ui.strong(language.text("Workspace"));
             ui.add(egui::TextEdit::singleline(&mut self.workspace_name).desired_width(180.0));
-            if ui.button("Open").clicked() {
+            if ui.button(language.text("Open")).clicked() {
                 self.open_workspace();
             }
-            if ui.button("Save").clicked() {
+            if ui.button(language.text("Save")).clicked() {
                 self.save_workspace(false);
             }
-            if ui.button("Save As").clicked() {
+            if ui.button(language.text("Save As")).clicked() {
                 self.save_workspace(true);
             }
             ui.separator();
@@ -1454,25 +1551,35 @@ impl BluetoothMonitorApp {
         let mut activate = None;
         let mut close = None;
         ui.horizontal_wrapped(|ui| {
-            ui.strong("Sessions");
+            ui.strong(language.text("Sessions"));
             for (index, session) in self.sessions.iter().enumerate() {
-                let label = format!(
+                let label = language.format(
                     "{} {} · {} logs · {} frames",
-                    session.meta.kind.label(),
-                    session.meta.name,
-                    session.logs.len(),
-                    session.protocol_frames.len()
+                    &[
+                        language.text(session.meta.kind.label()).to_owned(),
+                        session.meta.name.to_string(),
+                        session.logs.len().to_string(),
+                        session.protocol_frames.len().to_string(),
+                    ],
                 );
-                let details = format!(
-                    "created {}\ndevice {}\nsource {}",
-                    session.meta.created_at,
-                    session.meta.device_name.as_deref().unwrap_or("-"),
-                    session
-                        .meta
-                        .source_path
-                        .as_ref()
-                        .map(|path| path.display().to_string())
-                        .unwrap_or_else(|| "-".to_owned())
+                let details = language.format(
+                    "created {}\\ndevice {}\\nsource {}",
+                    &[
+                        session.meta.created_at.to_string(),
+                        session
+                            .meta
+                            .device_name
+                            .as_deref()
+                            .unwrap_or("-")
+                            .to_string(),
+                        session
+                            .meta
+                            .source_path
+                            .as_ref()
+                            .map(|path| path.display().to_string())
+                            .unwrap_or_else(|| "-".to_owned())
+                            .to_string(),
+                    ],
                 );
                 if ui
                     .selectable_label(self.active_session == index, label)
@@ -1487,38 +1594,42 @@ impl BluetoothMonitorApp {
                 }
             }
         });
-        if let Some(index) = activate {
-            if index != self.active_session {
-                if let Some(replay) = self.sessions[self.active_session].replay.as_mut() {
-                    replay.pause();
-                }
-                self.active_session = index;
-                self.selected_protocol_frame_sequence = None;
-                self.clear_plot_samples();
+        if let Some(index) = activate
+            && index != self.active_session
+        {
+            if let Some(replay) = self.sessions[self.active_session].replay.as_mut() {
+                replay.pause();
             }
+            self.active_session = index;
+            self.selected_protocol_frame_sequence = None;
+            self.clear_plot_samples();
         }
         if let Some(index) = close {
             self.close_session(index);
         }
 
         ui.horizontal_wrapped(|ui| {
-            ui.strong("View");
-            ui.checkbox(&mut self.layout.show_devices_gatt, "Devices/GATT");
-            ui.checkbox(&mut self.layout.show_plot, "Plot");
-            ui.checkbox(&mut self.layout.show_protocol, "Protocol");
-            ui.checkbox(&mut self.layout.show_replay, "Replay");
-            ui.checkbox(&mut self.layout.show_bookmarks, "Bookmarks");
-            ui.checkbox(&mut self.layout.show_monitor, "Monitor");
+            ui.strong(language.text("View"));
+            ui.checkbox(
+                &mut self.layout.show_devices_gatt,
+                language.text("Devices/GATT"),
+            );
+            ui.checkbox(&mut self.layout.show_plot, language.text("Plot"));
+            ui.checkbox(&mut self.layout.show_protocol, language.text("Protocol"));
+            ui.checkbox(&mut self.layout.show_replay, language.text("Replay"));
+            ui.checkbox(&mut self.layout.show_bookmarks, language.text("Bookmarks"));
+            ui.checkbox(&mut self.layout.show_monitor, language.text("Monitor"));
         });
     }
 
     fn render_bookmarks(&mut self, ui: &mut egui::Ui) {
+        let language = self.language;
         ui.horizontal_wrapped(|ui| {
-            ui.heading("Bookmarks & Notes");
+            ui.heading(language.text("Bookmarks & Notes"));
             let count = self.active_runtime_session().meta.bookmarks.len();
-            ui.label(format!("{count} bookmarks"));
+            ui.label(language.format("{count} bookmarks", &[count.to_string()]));
         });
-        ui.label("Session notes");
+        ui.label(language.text("Session notes"));
         ui.add(
             egui::TextEdit::multiline(&mut self.active_runtime_session_mut().meta.notes)
                 .desired_rows(2)
@@ -1553,23 +1664,31 @@ impl BluetoothMonitorApp {
                             ui.monospace(&bookmark.hex);
                         }
                         if !bookmark.service_uuid.is_empty() {
-                            ui.label("ⓘ")
-                                .on_hover_text(format!("Service {}", bookmark.service_uuid));
+                            ui.label("ⓘ").on_hover_text(language.format(
+                                "Service {}",
+                                std::slice::from_ref(&bookmark.service_uuid),
+                            ));
                         }
-                        if let Some(sequence) = bookmark.sequence {
-                            if ui.button(format!("Frame #{sequence}")).clicked() {
-                                select_sequence = Some(sequence);
-                            }
-                        }
-                        if let Some(offset) = bookmark.replay_position_ms {
-                            if ui
-                                .button(format!("Go {}", format_duration(offset)))
+                        if let Some(sequence) = bookmark.sequence
+                            && ui
+                                .button(
+                                    language.format("Frame #{sequence}", &[sequence.to_string()]),
+                                )
                                 .clicked()
-                            {
-                                seek_to = Some(offset);
-                            }
+                        {
+                            select_sequence = Some(sequence);
                         }
-                        if ui.small_button("Delete").clicked() {
+                        if let Some(offset) = bookmark.replay_position_ms
+                            && ui
+                                .button(
+                                    language
+                                        .format("Go {}", &[format_duration(offset).to_string()]),
+                                )
+                                .clicked()
+                        {
+                            seek_to = Some(offset);
+                        }
+                        if ui.small_button(language.text("Delete")).clicked() {
                             remove_id = Some(bookmark.id);
                         }
                     });
@@ -1589,10 +1708,10 @@ impl BluetoothMonitorApp {
         if let Some(sequence) = select_sequence {
             self.selected_protocol_frame_sequence = Some(sequence);
         }
-        if let Some(offset) = seek_to {
-            if let Some(replay) = self.active_runtime_session_mut().replay.as_mut() {
-                replay.seek(offset);
-            }
+        if let Some(offset) = seek_to
+            && let Some(replay) = self.active_runtime_session_mut().replay.as_mut()
+        {
+            replay.seek(offset);
         }
         if let Some(id) = remove_id {
             self.active_runtime_session_mut()
@@ -1603,26 +1722,40 @@ impl BluetoothMonitorApp {
     }
 
     fn render_toolbar(&mut self, ui: &mut egui::Ui) {
+        ui.horizontal(|ui| {
+            ui.label(self.language.text("Language"));
+            egui::ComboBox::from_id_salt("language-selector")
+                .selected_text(self.language.native_name())
+                .show_ui(ui, |ui| {
+                    for language in Language::ALL {
+                        ui.selectable_value(&mut self.language, language, language.native_name());
+                    }
+                });
+        });
+        let language = self.language;
         ui.horizontal_wrapped(|ui| {
             ui.strong("Bluetooth Monitor v0.7");
             ui.separator();
-            ui.label(format!("State: {}", self.connection_phase.label()));
+            ui.label(language.format(
+                "State: {}",
+                &[language.text(self.connection_phase.label()).to_string()],
+            ));
             ui.separator();
-            ui.label(&self.status);
+            ui.label(self.status.render(language));
         });
 
         if let Some(error) = &self.last_error {
-            ui.colored_label(ui.visuals().error_fg_color, error);
+            ui.colored_label(ui.visuals().error_fg_color, error.render(language));
         }
 
         ui.horizontal_wrapped(|ui| {
-            ui.label("Adapter");
+            ui.label(language.text("Adapter"));
 
             let selected_text = self
                 .adapters
                 .get(self.selected_adapter)
                 .map(AdapterInfo::display_name)
-                .unwrap_or_else(|| "初始化中…".to_owned());
+                .unwrap_or_else(|| language.text("初始化中…").to_owned());
             let mut requested_adapter = None;
             egui::ComboBox::from_id_salt("adapter-selector")
                 .selected_text(selected_text)
@@ -1638,20 +1771,23 @@ impl BluetoothMonitorApp {
                     }
                 });
 
-            if let Some(index) = requested_adapter {
-                if index != self.selected_adapter {
-                    self.send(BleCommand::SelectAdapter { index });
-                }
+            if let Some(index) = requested_adapter
+                && index != self.selected_adapter
+            {
+                self.send(BleCommand::SelectAdapter { index });
             }
 
-            ui.label(format!("Adapter state: {}", self.adapter_state));
+            ui.label(language.format(
+                "Adapter state: {}",
+                &[language.text(&self.adapter_state).to_owned()],
+            ));
             ui.separator();
 
             if ui
                 .button(if self.scanning {
-                    "停止扫描"
+                    language.text("停止扫描")
                 } else {
-                    "开始扫描"
+                    language.text("开始扫描")
                 })
                 .clicked()
             {
@@ -1668,29 +1804,31 @@ impl BluetoothMonitorApp {
                 && self.connected_id.is_none()
                 && self.selected_device_id.is_some();
             if ui
-                .add_enabled(can_connect, egui::Button::new("连接"))
+                .add_enabled(can_connect, egui::Button::new(language.text("连接")))
                 .clicked()
+                && let Some(peripheral_id) = self.selected_device_id.clone()
             {
-                if let Some(peripheral_id) = self.selected_device_id.clone() {
-                    let device_name = self
-                        .devices
-                        .iter()
-                        .find(|device| device.id == peripheral_id)
-                        .map(|device| device.name.clone());
-                    self.ensure_live_session_for_device(&peripheral_id, device_name.as_deref());
-                    self.send(BleCommand::Connect { peripheral_id });
-                }
+                let device_name = self
+                    .devices
+                    .iter()
+                    .find(|device| device.id == peripheral_id)
+                    .map(|device| device.name.clone());
+                self.ensure_live_session_for_device(&peripheral_id, device_name.as_deref());
+                self.send(BleCommand::Connect { peripheral_id });
             }
 
             if ui
-                .add_enabled(self.target_id.is_some(), egui::Button::new("断开/取消重连"))
+                .add_enabled(
+                    self.target_id.is_some(),
+                    egui::Button::new(language.text("断开/取消重连")),
+                )
                 .clicked()
             {
                 self.send(BleCommand::Disconnect);
             }
 
             let old_auto_reconnect = self.auto_reconnect;
-            ui.checkbox(&mut self.auto_reconnect, "自动重连");
+            ui.checkbox(&mut self.auto_reconnect, language.text("自动重连"));
             if self.auto_reconnect != old_auto_reconnect {
                 self.send(BleCommand::SetAutoReconnect {
                     enabled: self.auto_reconnect,
@@ -1702,15 +1840,17 @@ impl BluetoothMonitorApp {
                     .mtu
                     .map(|value| format!(" · MTU {value}"))
                     .unwrap_or_default();
-                ui.label(format!("设备: {name}{mtu}"));
+                ui.label(
+                    language.format("设备: {name}{mtu}", &[name.to_string(), mtu.to_string()]),
+                );
             }
         });
 
         ui.horizontal_wrapped(|ui| {
-            ui.label("Profile");
+            ui.label(language.text("Profile"));
             ui.add(
                 egui::TextEdit::singleline(&mut self.profile_name)
-                    .hint_text("profile name")
+                    .hint_text(language.text("profile name"))
                     .desired_width(160.0),
             );
 
@@ -1718,7 +1858,7 @@ impl BluetoothMonitorApp {
                 .selected_profile_index
                 .and_then(|index| self.profiles.get(index))
                 .map(|stored| stored.profile.name.clone())
-                .unwrap_or_else(|| "选择 Profile".to_owned());
+                .unwrap_or_else(|| language.text("选择 Profile").to_owned());
             let mut requested_profile = None;
             egui::ComboBox::from_id_salt("profile-selector")
                 .selected_text(profile_label)
@@ -1739,29 +1879,29 @@ impl BluetoothMonitorApp {
                 self.apply_profile(index);
             }
 
-            if ui.button("保存 Profile").clicked() {
+            if ui.button(language.text("保存 Profile")).clicked() {
                 self.save_current_profile();
             }
             if ui
                 .add_enabled(
                     self.selected_profile_index.is_some(),
-                    egui::Button::new("重新加载 Profile"),
+                    egui::Button::new(language.text("重新加载 Profile")),
                 )
                 .clicked()
+                && let Some(index) = self.selected_profile_index
             {
-                if let Some(index) = self.selected_profile_index {
-                    self.apply_profile(index);
-                }
+                self.apply_profile(index);
             }
 
             ui.separator();
-            if ui.button("打开 .bmon 回放").clicked() {
+            if ui.button(language.text("打开 .bmon 回放")).clicked() {
                 self.open_replay();
             }
         });
     }
 
     fn render_devices(&mut self, ui: &mut egui::Ui) {
+        let language = self.language;
         let visible_devices = self
             .devices
             .iter()
@@ -1770,30 +1910,32 @@ impl BluetoothMonitorApp {
             .collect::<Vec<_>>();
 
         ui.horizontal(|ui| {
-            ui.heading("Devices");
-            ui.label(format!(
+            ui.heading(language.text("Devices"));
+            ui.label(language.format(
                 "{} / {} visible",
-                visible_devices.len(),
-                self.devices.len()
+                &[
+                    visible_devices.len().to_string(),
+                    self.devices.len().to_string(),
+                ],
             ));
         });
         ui.horizontal_wrapped(|ui| {
-            ui.label("Name/Address");
+            ui.label(language.text("Name/Address"));
             ui.add(
                 egui::TextEdit::singleline(&mut self.scan_name_filter)
                     .hint_text("ESP32 / AA:BB")
                     .desired_width(140.0),
             );
-            ui.label("Service UUID");
+            ui.label(language.text("Service UUID"));
             ui.add(
                 egui::TextEdit::singleline(&mut self.scan_service_filter)
-                    .hint_text("180D or full UUID")
+                    .hint_text(language.text("180D or full UUID"))
                     .desired_width(190.0),
             );
-            ui.label("Min RSSI");
+            ui.label(language.text("Min RSSI"));
             ui.add(egui::DragValue::new(&mut self.scan_min_rssi).range(-127..=20));
         });
-        ui.small("Service UUID 会传给系统扫描过滤器，同时在设备列表中再次过滤；修改 Service UUID 后重新开始扫描生效。");
+        ui.small(language.text("Service UUID 会传给系统扫描过滤器，同时在设备列表中再次过滤；修改 Service UUID 后重新开始扫描生效。"));
         ui.separator();
 
         let mut requested_device = None;
@@ -1822,33 +1964,25 @@ impl BluetoothMonitorApp {
         }
 
         ui.separator();
-        ui.heading("Advertisement");
+        ui.heading(language.text("Advertisement"));
         let Some(device) = self.selected_device().cloned() else {
-            ui.label("选择设备后查看广播数据");
+            ui.label(language.text("选择设备后查看广播数据"));
             return;
         };
 
-        ui.monospace(format!(
-            "Name:       {}\nAddress:    {}\nAddressType:{}\nRSSI:       {}\nTX Power:   {}\nAppearance: {}",
-            device.name,
-            device.address,
-            device.address_type.as_deref().unwrap_or("-"),
-            device.rssi.map(|value| value.to_string()).unwrap_or_else(|| "-".to_owned()),
-            device.tx_power.map(|value| value.to_string()).unwrap_or_else(|| "-".to_owned()),
-            device
+        ui.monospace(language.format("Name:       {}\\nAddress:    {}\\nAddressType:{}\\nRSSI:       {}\\nTX Power:   {}\\nAppearance: {}", &[device.name.to_string(), device.address.to_string(), device.address_type.as_deref().unwrap_or("-").to_string(), device.rssi.map(|value| value.to_string()).unwrap_or_else(|| "-".to_owned()).to_string(), device.tx_power.map(|value| value.to_string()).unwrap_or_else(|| "-".to_owned()).to_string(), device
                 .appearance
                 .map(|value| format!("0x{value:04X} ({value})"))
-                .unwrap_or_else(|| "-".to_owned()),
-        ));
+                .unwrap_or_else(|| "-".to_owned()).to_string()]));
 
         egui::ScrollArea::vertical()
             .id_salt("advertisement")
             .max_height(230.0)
             .show(ui, |ui| {
                 if !device.advertised_services.is_empty() {
-                    egui::CollapsingHeader::new(format!(
+                    egui::CollapsingHeader::new(language.format(
                         "Advertised Services ({})",
-                        device.advertised_services.len()
+                        &[device.advertised_services.len().to_string()],
                     ))
                     .default_open(false)
                     .show(ui, |ui| {
@@ -1859,9 +1993,9 @@ impl BluetoothMonitorApp {
                 }
 
                 if !device.manufacturer_data.is_empty() {
-                    egui::CollapsingHeader::new(format!(
+                    egui::CollapsingHeader::new(language.format(
                         "Manufacturer Data ({})",
-                        device.manufacturer_data.len()
+                        &[device.manufacturer_data.len().to_string()],
                     ))
                     .default_open(true)
                     .show(ui, |ui| {
@@ -1876,9 +2010,9 @@ impl BluetoothMonitorApp {
                 }
 
                 if !device.service_data.is_empty() {
-                    egui::CollapsingHeader::new(format!(
+                    egui::CollapsingHeader::new(language.format(
                         "Service Data ({})",
-                        device.service_data.len()
+                        &[device.service_data.len().to_string()],
                     ))
                     .default_open(true)
                     .show(ui, |ui| {
@@ -1896,17 +2030,18 @@ impl BluetoothMonitorApp {
                     && device.manufacturer_data.is_empty()
                     && device.service_data.is_empty()
                 {
-                    ui.label("当前广播快照没有额外 Manufacturer / Service Data");
+                    ui.label(language.text("当前广播快照没有额外 Manufacturer / Service Data"));
                 }
             });
     }
 
     fn render_gatt(&mut self, ui: &mut egui::Ui) {
+        let language = self.language;
         ui.heading("GATT");
         ui.separator();
 
         if self.gatt.services.is_empty() {
-            ui.label("连接设备后显示 Service / Characteristic / Descriptor");
+            ui.label(language.text("连接设备后显示 Service / Characteristic / Descriptor"));
             return;
         }
 
@@ -1919,9 +2054,10 @@ impl BluetoothMonitorApp {
             .show(ui, |ui| {
                 for service in self.gatt.services.clone() {
                     let title = if service.primary {
-                        format!("Service {}  [primary]", service.uuid)
+                        language
+                            .format("Service {}  [primary]", std::slice::from_ref(&service.uuid))
                     } else {
-                        format!("Service {}", service.uuid)
+                        language.format("Service {}", std::slice::from_ref(&service.uuid))
                     };
 
                     egui::CollapsingHeader::new(title)
@@ -1950,9 +2086,11 @@ impl BluetoothMonitorApp {
                                             for descriptor in &characteristic.descriptors {
                                                 let selected = self.selected_descriptor.as_ref()
                                                     == Some(descriptor);
-                                                let label = format!(
+                                                let label = language.format(
                                                     "Descriptor {}",
-                                                    descriptor.key.descriptor_uuid
+                                                    std::slice::from_ref(
+                                                        &descriptor.key.descriptor_uuid,
+                                                    ),
                                                 );
                                                 if ui.selectable_label(selected, label).clicked() {
                                                     requested_characteristic =
@@ -1981,19 +2119,22 @@ impl BluetoothMonitorApp {
     }
 
     fn render_characteristic_controls(&mut self, ui: &mut egui::Ui) {
+        let language = self.language;
         ui.separator();
-        ui.heading("Characteristic");
+        ui.heading(language.text("Characteristic"));
 
         let Some(characteristic) = self.selected_characteristic.clone() else {
-            ui.label("从 GATT 树选择一个 Characteristic");
+            ui.label(language.text("从 GATT 树选择一个 Characteristic"));
             return;
         };
 
-        ui.monospace(format!(
-            "Service: {}\nChar:    {}\nProps:   {}",
-            characteristic.key.service_uuid,
-            characteristic.key.characteristic_uuid,
-            characteristic.properties.labels()
+        ui.monospace(language.format(
+            "Service: {}\\nChar:    {}\\nProps:   {}",
+            &[
+                characteristic.key.service_uuid.to_string(),
+                characteristic.key.characteristic_uuid.to_string(),
+                characteristic.properties.labels().to_string(),
+            ],
         ));
 
         let connected = self.connected_id.is_some();
@@ -2001,7 +2142,7 @@ impl BluetoothMonitorApp {
             if ui
                 .add_enabled(
                     connected && characteristic.properties.read,
-                    egui::Button::new("Read"),
+                    egui::Button::new(language.text("Read")),
                 )
                 .clicked()
             {
@@ -2013,7 +2154,7 @@ impl BluetoothMonitorApp {
             let can_subscribe = connected
                 && (characteristic.properties.notify || characteristic.properties.indicate);
             if ui
-                .add_enabled(can_subscribe, egui::Button::new("Subscribe"))
+                .add_enabled(can_subscribe, egui::Button::new(language.text("Subscribe")))
                 .clicked()
             {
                 self.send(BleCommand::Subscribe {
@@ -2021,22 +2162,22 @@ impl BluetoothMonitorApp {
                 });
             }
 
-            if ui.button("设为协议源").clicked() {
+            if ui.button(language.text("设为协议源")).clicked() {
                 self.protocol_source = Some(characteristic.key.clone());
                 self.reset_active_protocol();
             }
 
-            if ui.button("设为 CH1 数据源").clicked() {
-                if let Some(channel) = self.plot_channels.first_mut() {
-                    channel.config.source = Some(characteristic.key.clone());
-                    channel.config.enabled = true;
-                    channel.clear();
-                }
+            if ui.button(language.text("设为 CH1 数据源")).clicked()
+                && let Some(channel) = self.plot_channels.first_mut()
+            {
+                channel.config.source = Some(characteristic.key.clone());
+                channel.config.enabled = true;
+                channel.clear();
             }
         });
 
         ui.horizontal(|ui| {
-            ui.label("TX HEX");
+            ui.label(language.text("TX HEX"));
             ui.add(
                 egui::TextEdit::singleline(&mut self.tx_hex)
                     .hint_text("01 03 00 00 00 02 C4 0B")
@@ -2048,49 +2189,51 @@ impl BluetoothMonitorApp {
         let can_write_without_response = characteristic.properties.write_without_response;
 
         if can_write_with_response && can_write_without_response {
-            ui.checkbox(&mut self.write_with_response, "Write With Response");
+            ui.checkbox(
+                &mut self.write_with_response,
+                language.text("Write With Response"),
+            );
         } else if can_write_with_response {
             self.write_with_response = true;
-            ui.label("Write mode: With Response");
+            ui.label(language.text("Write mode: With Response"));
         } else if can_write_without_response {
             self.write_with_response = false;
-            ui.label("Write mode: Without Response");
+            ui.label(language.text("Write mode: Without Response"));
         }
 
         let parsed = parse_hex(&self.tx_hex);
-        if let Err(error) = &parsed {
-            if !self.tx_hex.trim().is_empty() {
-                ui.colored_label(ui.visuals().error_fg_color, error.to_string());
-            }
+        if let Err(error) = &parsed
+            && !self.tx_hex.trim().is_empty()
+        {
+            ui.colored_label(ui.visuals().error_fg_color, error.to_string());
         }
 
         let write_supported = can_write_with_response || can_write_without_response;
         let can_send =
             connected && write_supported && parsed.as_ref().is_ok_and(|data| !data.is_empty());
         if ui
-            .add_enabled(can_send, egui::Button::new("Send"))
+            .add_enabled(can_send, egui::Button::new(language.text("Send")))
             .clicked()
+            && let Ok(data) = parsed
         {
-            if let Ok(data) = parsed {
-                let tx = self.tx_hex.clone();
-                self.send(BleCommand::Write {
-                    characteristic: characteristic.key.clone(),
-                    data,
-                    with_response: self.write_with_response,
-                });
-                self.remember_tx(&tx);
-            }
+            let tx = self.tx_hex.clone();
+            self.send(BleCommand::Write {
+                characteristic: characteristic.key.clone(),
+                data,
+                with_response: self.write_with_response,
+            });
+            self.remember_tx(&tx);
         }
 
         ui.horizontal_wrapped(|ui| {
             let changed = ui
-                .checkbox(&mut self.periodic_enabled, "周期发送")
+                .checkbox(&mut self.periodic_enabled, language.text("周期发送"))
                 .changed();
             if changed {
                 self.periodic_next = None;
                 self.periodic_sent = 0;
             }
-            ui.label("间隔 ms");
+            ui.label(language.text("间隔 ms"));
             if ui
                 .add(egui::DragValue::new(&mut self.periodic_interval_ms).range(100..=3_600_000))
                 .changed()
@@ -2098,11 +2241,11 @@ impl BluetoothMonitorApp {
                 self.periodic_interval_ms = self.periodic_interval_ms.max(100);
                 self.periodic_next = None;
             }
-            ui.monospace(format!("sent {}", self.periodic_sent));
+            ui.monospace(language.format("sent {}", &[self.periodic_sent.to_string()]));
 
             let mut selected_history = None;
             egui::ComboBox::from_id_salt("tx-history")
-                .selected_text("发送历史")
+                .selected_text(language.text("发送历史"))
                 .show_ui(ui, |ui| {
                     for item in &self.tx_history {
                         if ui.selectable_label(false, item).clicked() {
@@ -2113,32 +2256,37 @@ impl BluetoothMonitorApp {
             if let Some(value) = selected_history {
                 self.tx_hex = value;
             }
-            if ui.button("清空历史").clicked() {
+            if ui.button(language.text("清空历史")).clicked() {
                 self.tx_history.clear();
             }
         });
 
         ui.separator();
-        ui.heading("Descriptor");
+        ui.heading(language.text("Descriptor"));
         let Some(descriptor) = self.selected_descriptor.clone() else {
             if characteristic.descriptors.is_empty() {
-                ui.label("该 Characteristic 没有 Descriptor");
+                ui.label(language.text("该 Characteristic 没有 Descriptor"));
             } else {
-                ui.label("在 GATT 树中选择 Descriptor 后可 Read / Write");
+                ui.label(language.text("在 GATT 树中选择 Descriptor 后可 Read / Write"));
             }
             return;
         };
 
-        ui.monospace(format!(
-            "Service: {}\nChar:    {}\nDesc:    {}",
-            descriptor.key.service_uuid,
-            descriptor.key.characteristic_uuid,
-            descriptor.key.descriptor_uuid
+        ui.monospace(language.format(
+            "Service: {}\\nChar:    {}\\nDesc:    {}",
+            &[
+                descriptor.key.service_uuid.to_string(),
+                descriptor.key.characteristic_uuid.to_string(),
+                descriptor.key.descriptor_uuid.to_string(),
+            ],
         ));
 
         ui.horizontal(|ui| {
             if ui
-                .add_enabled(connected, egui::Button::new("Read Descriptor"))
+                .add_enabled(
+                    connected,
+                    egui::Button::new(language.text("Read Descriptor")),
+                )
                 .clicked()
             {
                 self.send(BleCommand::ReadDescriptor {
@@ -2148,7 +2296,7 @@ impl BluetoothMonitorApp {
         });
 
         ui.horizontal(|ui| {
-            ui.label("Descriptor HEX");
+            ui.label(language.text("Descriptor HEX"));
             ui.add(
                 egui::TextEdit::singleline(&mut self.descriptor_hex)
                     .hint_text("01 00")
@@ -2157,10 +2305,10 @@ impl BluetoothMonitorApp {
         });
 
         let parsed_descriptor = parse_hex(&self.descriptor_hex);
-        if let Err(error) = &parsed_descriptor {
-            if !self.descriptor_hex.trim().is_empty() {
-                ui.colored_label(ui.visuals().error_fg_color, error.to_string());
-            }
+        if let Err(error) = &parsed_descriptor
+            && !self.descriptor_hex.trim().is_empty()
+        {
+            ui.colored_label(ui.visuals().error_fg_color, error.to_string());
         }
 
         let can_write_descriptor = connected
@@ -2168,27 +2316,30 @@ impl BluetoothMonitorApp {
                 .as_ref()
                 .is_ok_and(|data| !data.is_empty());
         if ui
-            .add_enabled(can_write_descriptor, egui::Button::new("Write Descriptor"))
+            .add_enabled(
+                can_write_descriptor,
+                egui::Button::new(language.text("Write Descriptor")),
+            )
             .clicked()
+            && let Ok(data) = parsed_descriptor
         {
-            if let Ok(data) = parsed_descriptor {
-                self.send(BleCommand::WriteDescriptor {
-                    descriptor: descriptor.key,
-                    data,
-                });
-            }
+            self.send(BleCommand::WriteDescriptor {
+                descriptor: descriptor.key,
+                data,
+            });
         }
     }
 
     fn render_monitor(&mut self, ui: &mut egui::Ui) {
+        let language = self.language;
         let active_is_live = self.active_session == self.live_session;
         ui.horizontal_wrapped(|ui| {
-            ui.heading("Data Monitor");
-            if ui.button("清空显示").clicked() {
+            ui.heading(language.text("Data Monitor"));
+            if ui.button(language.text("清空显示")).clicked() {
                 self.active_runtime_session_mut().logs.clear();
             }
-            ui.checkbox(&mut self.monitor_paused, "暂停 RX 显示");
-            ui.checkbox(&mut self.auto_scroll, "自动滚动");
+            ui.checkbox(&mut self.monitor_paused, language.text("暂停 RX 显示"));
+            ui.checkbox(&mut self.auto_scroll, language.text("自动滚动"));
             ui.checkbox(&mut self.show_ascii, "ASCII");
 
             ui.separator();
@@ -2198,60 +2349,71 @@ impl BluetoothMonitorApp {
 
             ui.separator();
             if self.capture.is_some() {
-                if ui.button("停止捕获").clicked() {
+                if ui.button(language.text("停止捕获")).clicked() {
                     self.stop_capture();
                 }
             } else if ui
-                .add_enabled(active_is_live, egui::Button::new("开始捕获 CSV + BMON"))
+                .add_enabled(
+                    active_is_live,
+                    egui::Button::new(language.text("开始捕获 CSV + BMON")),
+                )
                 .clicked()
             {
                 self.start_capture();
             }
 
-            if ui.button("回放 BMON").clicked() {
+            if ui.button(language.text("回放 BMON")).clicked() {
                 self.open_replay();
             }
         });
 
         let stats = self.active_runtime_session().stats;
         ui.horizontal_wrapped(|ui| {
-            ui.label("过滤");
+            ui.label(language.text("过滤"));
             ui.add(
                 egui::TextEdit::singleline(&mut self.filter)
-                    .hint_text("UUID / HEX / ASCII / 时间")
+                    .hint_text(language.text("UUID / HEX / ASCII / 时间"))
                     .desired_width(280.0),
             );
-            ui.monospace(format!(
+            ui.monospace(language.format(
                 "RX {} pkts / {} B   RD {} / {} B   TX {} / {} B",
-                stats.rx_packets,
-                stats.rx_bytes,
-                stats.read_packets,
-                stats.read_bytes,
-                stats.tx_packets,
-                stats.tx_bytes,
+                &[
+                    stats.rx_packets.to_string(),
+                    stats.rx_bytes.to_string(),
+                    stats.read_packets.to_string(),
+                    stats.read_bytes.to_string(),
+                    stats.tx_packets.to_string(),
+                    stats.tx_bytes.to_string(),
+                ],
             ));
             if stats.paused_rx_packets > 0 {
-                ui.label(format!("暂停期间隐藏 {} RX", stats.paused_rx_packets));
+                ui.label(
+                    language.format("暂停期间隐藏 {} RX", &[stats.paused_rx_packets.to_string()]),
+                );
             }
         });
 
         if let Some(capture) = &self.capture {
-            ui.monospace(format!(
+            ui.monospace(language.format(
                 "CAPTURE ● {} records · CSV {} · BMON {}",
-                capture.records(),
-                capture.paths().csv.display(),
-                capture.paths().raw.display()
+                &[
+                    capture.records().to_string(),
+                    capture.paths().csv.display().to_string(),
+                    capture.paths().raw.display().to_string(),
+                ],
             ));
         } else if let Some(paths) = &self.last_capture_paths {
-            ui.monospace(format!(
+            ui.monospace(language.format(
                 "Last capture: CSV {} · BMON {}",
-                paths.csv.display(),
-                paths.raw.display()
+                &[
+                    paths.csv.display().to_string(),
+                    paths.raw.display().to_string(),
+                ],
             ));
         }
 
         if let Some(error) = &self.capture_error {
-            ui.colored_label(ui.visuals().error_fg_color, error);
+            ui.colored_label(ui.visuals().error_fg_color, error.render(language));
         }
 
         ui.separator();
@@ -2266,11 +2428,13 @@ impl BluetoothMonitorApp {
             .collect::<Vec<_>>();
         let total_logs = self.active_runtime_session().logs.len();
 
-        ui.label(format!(
+        ui.label(language.format(
             "显示 {} / {} 条，内存上限 {}",
-            visible_entries.len(),
-            total_logs,
-            MAX_LOG_ENTRIES
+            &[
+                visible_entries.len().to_string(),
+                total_logs.to_string(),
+                MAX_LOG_ENTRIES.to_string(),
+            ],
         ));
 
         let mut bookmark = None;
@@ -2281,7 +2445,11 @@ impl BluetoothMonitorApp {
                 for row in row_range {
                     let entry = &visible_entries[row];
                     ui.horizontal(|ui| {
-                        if ui.small_button("☆").on_hover_text("Bookmark").clicked() {
+                        if ui
+                            .small_button("☆")
+                            .on_hover_text(language.text("Bookmark"))
+                            .clicked()
+                        {
                             bookmark = Some(entry.clone());
                         }
                         ui.monospace(&entry.timestamp);
@@ -2300,26 +2468,29 @@ impl BluetoothMonitorApp {
     }
 
     fn render_plot(&mut self, ui: &mut egui::Ui) {
+        let language = self.language;
         ui.horizontal_wrapped(|ui| {
-            ui.heading("Realtime Plot");
-            ui.label("Points/channel");
+            ui.heading(language.text("Realtime Plot"));
+            ui.label(language.text("Points/channel"));
             ui.add(
                 egui::DragValue::new(&mut self.plot_max_points)
                     .range(100..=100_000)
                     .speed(100),
             );
-            if ui.button("Clear All").clicked() {
+            if ui.button(language.text("Clear All")).clicked() {
                 for channel in &mut self.plot_channels {
                     channel.clear();
                 }
             }
-            if self.plot_channels.len() < 8 && ui.button("+ Channel").clicked() {
+            if self.plot_channels.len() < 8 && ui.button(language.text("+ Channel")).clicked() {
                 let index = self.plot_channels.len() + 1;
-                let mut config = PlotChannelConfig::default();
-                config.name = format!("CH{index}");
+                let config = PlotChannelConfig {
+                    name: format!("CH{index}"),
+                    ..PlotChannelConfig::default()
+                };
                 self.plot_channels.push(PlotChannel::new(config));
             }
-            if self.plot_channels.len() > 1 && ui.button("- Last").clicked() {
+            if self.plot_channels.len() > 1 && ui.button(language.text("- Last")).clicked() {
                 self.plot_channels.pop();
             }
         });
@@ -2341,17 +2512,20 @@ impl BluetoothMonitorApp {
                         .source
                         .as_ref()
                         .map(|key| key.characteristic_uuid.as_str())
-                        .unwrap_or("no source");
+                        .unwrap_or(language.text("no source"));
                     ui.monospace(source);
                     if ui
-                        .add_enabled(selected_key.is_some(), egui::Button::new("Use selected"))
+                        .add_enabled(
+                            selected_key.is_some(),
+                            egui::Button::new(language.text("Use selected")),
+                        )
                         .clicked()
                     {
                         channel.config.source = selected_key.clone();
                         channel.config.enabled = true;
                         channel.clear();
                     }
-                    ui.label("Offset");
+                    ui.label(language.text("Offset"));
                     ui.add(
                         egui::DragValue::new(&mut channel.config.offset)
                             .range(0..=4096)
@@ -2372,7 +2546,7 @@ impl BluetoothMonitorApp {
                     ui.add(egui::DragValue::new(&mut channel.config.scale).speed(0.1));
                     ui.label("+");
                     ui.add(egui::DragValue::new(&mut channel.config.bias).speed(0.1));
-                    ui.monospace(format!("{} pts", channel.samples.len()));
+                    ui.monospace(language.format("{} pts", &[channel.samples.len().to_string()]));
                 });
             });
         }
@@ -2396,45 +2570,49 @@ impl BluetoothMonitorApp {
     }
 
     fn render_protocol(&mut self, ui: &mut egui::Ui) {
+        let language = self.language;
         ui.horizontal_wrapped(|ui| {
-            ui.heading("Protocol Analyzer");
+            ui.heading(language.text("Protocol Analyzer"));
             if ui
-                .checkbox(&mut self.protocol_config.enabled, "Enable")
+                .checkbox(&mut self.protocol_config.enabled, language.text("Enable"))
                 .changed()
             {
                 self.reset_active_protocol();
             }
-            if ui.button("Clear Frames").clicked() {
+            if ui.button(language.text("Clear Frames")).clicked() {
                 self.reset_active_protocol();
             }
-            if let Some(characteristic) = &self.selected_characteristic {
-                if ui.button("Use selected Characteristic").clicked() {
-                    self.protocol_source = Some(characteristic.key.clone());
-                    self.reset_active_protocol();
-                }
+            if let Some(characteristic) = &self.selected_characteristic
+                && ui
+                    .button(language.text("Use selected Characteristic"))
+                    .clicked()
+            {
+                self.protocol_source = Some(characteristic.key.clone());
+                self.reset_active_protocol();
             }
         });
 
         ui.horizontal_wrapped(|ui| {
-            ui.label("Preset");
+            ui.label(language.text("Preset"));
             let preset_label = self
                 .selected_protocol_preset
                 .and_then(|index| self.protocol_presets.get(index))
                 .map(|stored| {
                     if stored.built_in {
-                        format!("{} (built-in)", stored.preset.name)
+                        language.format("{} (built-in)", std::slice::from_ref(&stored.preset.name))
                     } else {
                         stored.preset.name.clone()
                     }
                 })
-                .unwrap_or_else(|| "选择协议预设".to_owned());
+                .unwrap_or_else(|| language.text("选择协议预设").to_owned());
             let mut requested_preset = None;
             egui::ComboBox::from_id_salt("protocol-preset-selector")
                 .selected_text(preset_label)
                 .show_ui(ui, |ui| {
                     for (index, stored) in self.protocol_presets.iter().enumerate() {
                         let label = if stored.built_in {
-                            format!("{} · built-in", stored.preset.name)
+                            language
+                                .format("{} · built-in", std::slice::from_ref(&stored.preset.name))
                         } else {
                             stored.preset.name.clone()
                         };
@@ -2452,17 +2630,17 @@ impl BluetoothMonitorApp {
 
             ui.add(
                 egui::TextEdit::singleline(&mut self.protocol_preset_name)
-                    .hint_text("custom preset name")
+                    .hint_text(language.text("custom preset name"))
                     .desired_width(150.0),
             );
-            if ui.button("Save Preset").clicked() {
+            if ui.button(language.text("Save Preset")).clicked() {
                 self.save_protocol_preset();
             }
             ui.separator();
             if ui
                 .add_enabled(
                     !self.active_runtime_session().protocol_frames.is_empty(),
-                    egui::Button::new("Export CSV"),
+                    egui::Button::new(language.text("Export CSV")),
                 )
                 .clicked()
             {
@@ -2471,7 +2649,7 @@ impl BluetoothMonitorApp {
             if ui
                 .add_enabled(
                     !self.active_runtime_session().protocol_frames.is_empty(),
-                    egui::Button::new("Export JSON"),
+                    egui::Button::new(language.text("Export JSON")),
                 )
                 .clicked()
             {
@@ -2479,26 +2657,34 @@ impl BluetoothMonitorApp {
             }
         });
 
-        if let Some(index) = self.selected_protocol_preset {
-            if let Some(stored) = self.protocol_presets.get(index) {
-                if !stored.preset.description.is_empty() {
-                    ui.small(&stored.preset.description);
-                }
-            }
+        if let Some(index) = self.selected_protocol_preset
+            && let Some(stored) = self.protocol_presets.get(index)
+            && !stored.preset.description.is_empty()
+        {
+            ui.small(&stored.preset.description);
         }
 
         let source = self
             .protocol_source
             .as_ref()
             .map(|key| format!("{} / {}", key.service_uuid, key.characteristic_uuid))
-            .unwrap_or_else(|| "未选择 Characteristic".to_owned());
-        ui.monospace(format!(
-            "Source: {source} · buffered {} B · frames {}",
-            self.active_runtime_session()
-                .protocol_decoder
-                .buffered_bytes(),
-            self.active_runtime_session().protocol_frames.len()
-        ));
+            .unwrap_or_else(|| language.text("未选择 Characteristic").to_owned());
+        ui.monospace(
+            language.format(
+                "Source: {source} · buffered {} B · frames {}",
+                &[
+                    source.to_string(),
+                    self.active_runtime_session()
+                        .protocol_decoder
+                        .buffered_bytes()
+                        .to_string(),
+                    self.active_runtime_session()
+                        .protocol_frames
+                        .len()
+                        .to_string(),
+                ],
+            ),
+        );
 
         let mut frame_kind = match &self.protocol_config.frame_mode {
             FrameMode::BlePacket => 0,
@@ -2508,22 +2694,26 @@ impl BluetoothMonitorApp {
         };
         let previous_kind = frame_kind;
         ui.horizontal_wrapped(|ui| {
-            ui.label("Framing");
+            ui.label(language.text("Framing"));
             egui::ComboBox::from_id_salt("protocol-frame-mode")
-                .selected_text(self.protocol_config.frame_mode.label())
+                .selected_text(language.text(self.protocol_config.frame_mode.label()))
                 .show_ui(ui, |ui| {
-                    ui.selectable_value(&mut frame_kind, 0, "BLE packet");
-                    ui.selectable_value(&mut frame_kind, 1, "Fixed length");
-                    ui.selectable_value(&mut frame_kind, 2, "Delimiter");
-                    ui.selectable_value(&mut frame_kind, 3, "Length field");
+                    ui.selectable_value(&mut frame_kind, 0, language.text("BLE packet"));
+                    ui.selectable_value(&mut frame_kind, 1, language.text("Fixed length"));
+                    ui.selectable_value(&mut frame_kind, 2, language.text("Delimiter"));
+                    ui.selectable_value(&mut frame_kind, 3, language.text("Length field"));
                 });
 
             ui.label("CRC");
             egui::ComboBox::from_id_salt("protocol-crc")
-                .selected_text(self.protocol_config.crc.label())
+                .selected_text(language.text(self.protocol_config.crc.label()))
                 .show_ui(ui, |ui| {
                     for crc in CrcMode::ALL {
-                        ui.selectable_value(&mut self.protocol_config.crc, crc, crc.label());
+                        ui.selectable_value(
+                            &mut self.protocol_config.crc,
+                            crc,
+                            language.text(crc.label()),
+                        );
                     }
                 });
         });
@@ -2551,27 +2741,30 @@ impl BluetoothMonitorApp {
 
         match &mut self.protocol_config.frame_mode {
             FrameMode::BlePacket => {
-                ui.label("每个 BLE Notification 直接作为一个协议帧。");
+                ui.label(language.text("每个 BLE Notification 直接作为一个协议帧。"));
             }
             FrameMode::FixedLength { length } => {
                 ui.horizontal(|ui| {
-                    ui.label("Frame length");
+                    ui.label(language.text("Frame length"));
                     ui.add(egui::DragValue::new(length).range(1..=65_536));
                 });
             }
             FrameMode::Delimiter { delimiter, include } => {
                 ui.horizontal_wrapped(|ui| {
-                    ui.label("Delimiter HEX");
+                    ui.label(language.text("Delimiter HEX"));
                     ui.add(
                         egui::TextEdit::singleline(&mut self.protocol_delimiter_hex)
                             .desired_width(180.0),
                     );
-                    ui.checkbox(include, "Include delimiter");
+                    ui.checkbox(include, language.text("Include delimiter"));
                 });
                 match parse_hex(&self.protocol_delimiter_hex) {
                     Ok(value) if !value.is_empty() => *delimiter = value,
                     Ok(_) => {
-                        ui.colored_label(ui.visuals().error_fg_color, "Delimiter 不能为空");
+                        ui.colored_label(
+                            ui.visuals().error_fg_color,
+                            language.text("Delimiter 不能为空"),
+                        );
                     }
                     Err(error) => {
                         ui.colored_label(ui.visuals().error_fg_color, error.to_string());
@@ -2585,9 +2778,9 @@ impl BluetoothMonitorApp {
                 adjustment,
             } => {
                 ui.horizontal_wrapped(|ui| {
-                    ui.label("Length offset");
+                    ui.label(language.text("Length offset"));
                     ui.add(egui::DragValue::new(offset).range(0..=4096));
-                    ui.label("width");
+                    ui.label(language.text("width"));
                     egui::ComboBox::from_id_salt("length-width")
                         .selected_text(width.to_string())
                         .show_ui(ui, |ui| {
@@ -2602,17 +2795,21 @@ impl BluetoothMonitorApp {
                                 ui.selectable_value(endian, candidate, candidate.label());
                             }
                         });
-                    ui.label("adjustment");
+                    ui.label(language.text("adjustment"));
                     ui.add(egui::DragValue::new(adjustment).range(-65_536..=65_536));
                 });
-                ui.small("总帧长 = 长度字段值 + adjustment；总帧长必须覆盖长度字段本身。");
+                ui.small(
+                    language.text("总帧长 = 长度字段值 + adjustment；总帧长必须覆盖长度字段本身。"),
+                );
             }
         }
 
         ui.separator();
         ui.horizontal_wrapped(|ui| {
-            ui.strong("Fields");
-            if ui.button("+ Field").clicked() && self.protocol_config.fields.len() < 32 {
+            ui.strong(language.text("Fields"));
+            if ui.button(language.text("+ Field")).clicked()
+                && self.protocol_config.fields.len() < 32
+            {
                 let index = self.protocol_config.fields.len() + 1;
                 self.protocol_config.fields.push(FieldDefinition {
                     name: format!("field{index}"),
@@ -2626,7 +2823,7 @@ impl BluetoothMonitorApp {
             ui.push_id(("protocol-field", index), |ui| {
                 ui.horizontal_wrapped(|ui| {
                     ui.add(egui::TextEdit::singleline(&mut field.name).desired_width(90.0));
-                    ui.label("offset");
+                    ui.label(language.text("offset"));
                     ui.add(egui::DragValue::new(&mut field.offset).range(0..=65_536));
                     egui::ComboBox::from_id_salt("type")
                         .selected_text(field.value_type.label())
@@ -2660,10 +2857,9 @@ impl BluetoothMonitorApp {
             .iter()
             .cloned()
             .collect::<Vec<_>>();
-        ui.label(format!(
+        ui.label(language.format(
             "Decoded frames: {} / {} retained",
-            frames.len(),
-            MAX_PROTOCOL_FRAMES
+            &[frames.len().to_string(), MAX_PROTOCOL_FRAMES.to_string()],
         ));
 
         let mut selected = self.selected_protocol_frame_sequence;
@@ -2677,7 +2873,7 @@ impl BluetoothMonitorApp {
                     ui.horizontal_wrapped(|ui| {
                         if ui
                             .small_button("☆")
-                            .on_hover_text("Bookmark frame")
+                            .on_hover_text(language.text("Bookmark frame"))
                             .clicked()
                         {
                             bookmark = Some(frame.clone());
@@ -2702,41 +2898,42 @@ impl BluetoothMonitorApp {
             self.add_protocol_bookmark(&frame);
         }
 
-        if let Some(sequence) = self.selected_protocol_frame_sequence {
-            if let Some(frame) = frames.iter().find(|frame| frame.sequence == sequence) {
-                ui.separator();
-                ui.strong(format!("Fields · frame #{sequence}"));
-                egui::Grid::new(("protocol-field-values", sequence))
-                    .striped(true)
-                    .show(ui, |ui| {
-                        ui.strong("Field");
-                        ui.strong("Value");
+        if let Some(sequence) = self.selected_protocol_frame_sequence
+            && let Some(frame) = frames.iter().find(|frame| frame.sequence == sequence)
+        {
+            ui.separator();
+            ui.strong(language.format("Fields · frame #{sequence}", &[sequence.to_string()]));
+            egui::Grid::new(("protocol-field-values", sequence))
+                .striped(true)
+                .show(ui, |ui| {
+                    ui.strong(language.text("Field"));
+                    ui.strong(language.text("Value"));
+                    ui.end_row();
+                    for field in &frame.fields {
+                        ui.monospace(&field.name);
+                        match field.value {
+                            Some(value) => ui.monospace(format!("{value:.9}")),
+                            None => ui.monospace(language.text("N/A")),
+                        };
                         ui.end_row();
-                        for field in &frame.fields {
-                            ui.monospace(&field.name);
-                            match field.value {
-                                Some(value) => ui.monospace(format!("{value:.9}")),
-                                None => ui.monospace("N/A"),
-                            };
-                            ui.end_row();
-                        }
-                    });
-            }
+                    }
+                });
         }
     }
 
     fn render_replay(&mut self, ui: &mut egui::Ui) {
+        let language = self.language;
         let session_index = self.active_session;
         let has_replay = self.sessions[session_index].replay.is_some();
         let mut close_session = false;
         ui.horizontal_wrapped(|ui| {
-            ui.heading("BMON Replay");
-            if ui.button("Open .bmon").clicked() {
+            ui.heading(language.text("BMON Replay"));
+            if ui.button(language.text("Open .bmon")).clicked() {
                 self.open_replay();
             }
             if has_replay
                 && session_index != self.live_session
-                && ui.button("Close Session").clicked()
+                && ui.button(language.text("Close Session")).clicked()
             {
                 close_session = true;
             }
@@ -2747,22 +2944,31 @@ impl BluetoothMonitorApp {
         }
 
         let Some(replay) = self.sessions[session_index].replay.as_mut() else {
-            ui.label("当前 Session 不是可回放的 .bmon；打开文件后会创建独立 Replay Session。");
+            ui.label(
+                language
+                    .text("当前 Session 不是可回放的 .bmon；打开文件后会创建独立 Replay Session。"),
+            );
             return;
         };
 
-        ui.monospace(format!(
+        ui.monospace(language.format(
             "{} · {} records · duration {}",
-            replay.path.display(),
-            replay.len(),
-            format_duration(replay.duration_ms())
+            &[
+                replay.path.display().to_string(),
+                replay.len().to_string(),
+                format_duration(replay.duration_ms()).to_string(),
+            ],
         ));
 
         let mut stepped = None;
         let mut bookmark_position = None;
         ui.horizontal_wrapped(|ui| {
             if ui
-                .button(if replay.is_playing() { "Pause" } else { "Play" })
+                .button(if replay.is_playing() {
+                    language.text("Pause")
+                } else {
+                    language.text("Play")
+                })
                 .clicked()
             {
                 if replay.is_playing() {
@@ -2771,23 +2977,23 @@ impl BluetoothMonitorApp {
                     replay.play();
                 }
             }
-            if ui.button("Stop").clicked() {
+            if ui.button(language.text("Stop")).clicked() {
                 replay.stop();
             }
-            if ui.button("Prev Event").clicked() {
+            if ui.button(language.text("Prev Event")).clicked() {
                 replay.previous_event();
             }
-            if ui.button("Next Event").clicked() {
+            if ui.button(language.text("Next Event")).clicked() {
                 replay.next_event();
             }
-            if ui.button("Step").clicked() {
+            if ui.button(language.text("Step")).clicked() {
                 stepped = replay.step_one();
             }
-            if ui.button("Bookmark Position").clicked() {
+            if ui.button(language.text("Bookmark Position")).clicked() {
                 bookmark_position = Some(replay.position_ms());
             }
 
-            ui.label("Speed");
+            ui.label(language.text("Speed"));
             let mut speed = replay.speed();
             egui::ComboBox::from_id_salt("replay-speed")
                 .selected_text(format!("{speed}×"))
@@ -2808,7 +3014,7 @@ impl BluetoothMonitorApp {
                 .add(
                     egui::Slider::new(&mut position, 0..=max)
                         .show_value(false)
-                        .text("timeline"),
+                        .text(language.text("timeline")),
                 )
                 .changed()
             {
@@ -2816,8 +3022,13 @@ impl BluetoothMonitorApp {
             }
             let event_label = replay
                 .current_event_index()
-                .map(|index| format!("event {} / {}", index + 1, replay.len()))
-                .unwrap_or_else(|| "event 0 / 0".to_owned());
+                .map(|index| {
+                    language.format(
+                        "event {} / {}",
+                        &[(index + 1).to_string(), replay.len().to_string()],
+                    )
+                })
+                .unwrap_or_else(|| language.text("event 0 / 0").to_owned());
             ui.monospace(format!(
                 "{} / {} · {}",
                 format_duration(replay.position_ms()),
@@ -2942,6 +3153,7 @@ impl eframe::App for BluetoothMonitorApp {
 
     fn save(&mut self, storage: &mut dyn eframe::Storage) {
         let preferences = AppPreferences {
+            language: self.language,
             auto_scroll: self.auto_scroll,
             show_ascii: self.show_ascii,
             write_with_response: self.write_with_response,
@@ -2974,6 +3186,23 @@ impl eframe::App for BluetoothMonitorApp {
 #[cfg(test)]
 mod tests {
     use super::*;
+
+    #[test]
+    fn old_preferences_load_and_language_choice_is_saved() {
+        let preferences: AppPreferences =
+            serde_json::from_str(r#"{"auto_scroll":false,"scan_name_filter":"ESP32"}"#).unwrap();
+        assert_eq!(preferences.language, Language::SimplifiedChinese);
+        assert!(!preferences.auto_scroll);
+        assert_eq!(preferences.scan_name_filter, "ESP32");
+        let preferences = AppPreferences {
+            language: Language::English,
+            ..preferences
+        };
+        let saved = serde_json::to_string(&preferences).unwrap();
+        let restored: AppPreferences = serde_json::from_str(&saved).unwrap();
+        assert_eq!(restored.language, Language::English);
+        assert_eq!(restored.scan_name_filter, "ESP32");
+    }
 
     #[test]
     fn short_ble_uuid_filter_matches_bluetooth_base_uuid() {

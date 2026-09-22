@@ -6,16 +6,11 @@ use std::collections::VecDeque;
 const MAX_BUFFER_BYTES: usize = 1024 * 1024;
 const MAX_FRAME_BYTES: usize = 64 * 1024;
 
-#[derive(Debug, Clone, Copy, PartialEq, Eq, Serialize, Deserialize)]
+#[derive(Debug, Clone, Copy, PartialEq, Eq, Serialize, Deserialize, Default)]
 pub enum Endian {
+    #[default]
     Little,
     Big,
-}
-
-impl Default for Endian {
-    fn default() -> Self {
-        Self::Little
-    }
 }
 
 impl Endian {
@@ -29,8 +24,9 @@ impl Endian {
     }
 }
 
-#[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize)]
+#[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize, Default)]
 pub enum FrameMode {
+    #[default]
     BlePacket,
     FixedLength {
         length: usize,
@@ -47,12 +43,6 @@ pub enum FrameMode {
     },
 }
 
-impl Default for FrameMode {
-    fn default() -> Self {
-        Self::BlePacket
-    }
-}
-
 impl FrameMode {
     pub fn label(&self) -> &'static str {
         match self {
@@ -64,20 +54,15 @@ impl FrameMode {
     }
 }
 
-#[derive(Debug, Clone, Copy, PartialEq, Eq, Serialize, Deserialize)]
+#[derive(Debug, Clone, Copy, PartialEq, Eq, Serialize, Deserialize, Default)]
 pub enum CrcMode {
+    #[default]
     None,
     Crc8SmbusTail,
     Crc16ModbusLeTail,
     Crc16ModbusBeTail,
     Crc16XmodemBeTail,
     Crc16IbmSdlcLeTail,
-}
-
-impl Default for CrcMode {
-    fn default() -> Self {
-        Self::None
-    }
 }
 
 impl CrcMode {
@@ -191,18 +176,10 @@ pub trait ProtocolDecoder {
     fn buffered_bytes(&self) -> usize;
 }
 
+#[derive(Default)]
 pub struct StreamProtocolDecoder {
     config: ProtocolConfig,
     buffer: VecDeque<u8>,
-}
-
-impl Default for StreamProtocolDecoder {
-    fn default() -> Self {
-        Self {
-            config: ProtocolConfig::default(),
-            buffer: VecDeque::new(),
-        }
-    }
 }
 
 impl ProtocolDecoder for StreamProtocolDecoder {

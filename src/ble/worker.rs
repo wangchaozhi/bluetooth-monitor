@@ -99,11 +99,10 @@ pub async fn run(
                         if let Some(task) = notification_task.take() {
                             task.abort();
                         }
-                        if let Some(current) = peripheral.as_ref() {
-                            if current.is_connected().await.unwrap_or(false) {
+                        if let Some(current) = peripheral.as_ref()
+                            && current.is_connected().await.unwrap_or(false) {
                                 let _ = current.disconnect().await;
                             }
-                        }
                         peripheral = None;
                         connected = false;
                         emit(
@@ -190,11 +189,10 @@ pub async fn run(
                             if let Some(task) = notification_task.take() {
                                 task.abort();
                             }
-                            if let Some(current) = peripheral.as_ref() {
-                                if current.is_connected().await.unwrap_or(false) {
+                            if let Some(current) = peripheral.as_ref()
+                                && current.is_connected().await.unwrap_or(false) {
                                     let _ = current.disconnect().await;
                                 }
-                            }
                             connected = false;
                             peripheral = None;
 
@@ -249,16 +247,14 @@ pub async fn run(
                             task.abort();
                         }
                         let id = peripheral.as_ref().map(|value| value.id().to_string());
-                        if let Some(current) = peripheral.as_ref() {
-                            if current.is_connected().await.unwrap_or(false) {
-                                if let Err(error) = current.disconnect().await {
+                        if let Some(current) = peripheral.as_ref()
+                            && current.is_connected().await.unwrap_or(false)
+                                && let Err(error) = current.disconnect().await {
                                     emit(
                                         &events,
                                         BleEvent::Error(format!("断开 BLE 设备失败: {error:#}")),
                                     );
                                 }
-                            }
-                        }
                         peripheral = None;
                         connected = false;
                         emit(
@@ -284,9 +280,9 @@ pub async fn run(
                         emit(
                             &events,
                             BleEvent::Status(if enabled {
-                                "自动重连已开启".to_owned()
+                                crate::i18n::LocalizedText::new("自动重连已开启", &[])
                             } else {
-                                "自动重连已关闭".to_owned()
+                                crate::i18n::LocalizedText::new("自动重连已关闭", &[])
                             }),
                         );
                     }
@@ -369,11 +365,10 @@ pub async fn run(
                         if let Some(task) = notification_task.take() {
                             task.abort();
                         }
-                        if let Some(current) = peripheral.as_ref() {
-                            if current.is_connected().await.unwrap_or(false) {
+                        if let Some(current) = peripheral.as_ref()
+                            && current.is_connected().await.unwrap_or(false) {
                                 let _ = current.disconnect().await;
                             }
-                        }
                         info!("BLE worker shutdown requested");
                         break;
                     }
@@ -430,8 +425,7 @@ pub async fn run(
                             && peripheral
                                 .as_ref()
                                 .is_some_and(|current| current.id().to_string() == id_string)
-                        {
-                            if let Some(current) = peripheral.as_ref() {
+                            && let Some(current) = peripheral.as_ref() {
                                 match current.discover_services_with_timeout(CONNECT_TIMEOUT).await {
                                     Ok(()) => emit(
                                         &events,
@@ -445,7 +439,6 @@ pub async fn run(
                                     ),
                                 }
                             }
-                        }
                     }
                     CentralEvent::StateUpdate(state) => {
                         emit(
@@ -473,8 +466,8 @@ pub async fn run(
                     continue;
                 }
 
-                if peripheral.is_none() {
-                    if let Some(id) = target_id.as_deref() {
+                if peripheral.is_none()
+                    && let Some(id) = target_id.as_deref() {
                         match find_peripheral(&adapter, id).await {
                             Ok(found) => peripheral = Some(found),
                             Err(error) => {
@@ -494,7 +487,6 @@ pub async fn run(
                             }
                         }
                     }
-                }
 
                 let Some(current) = peripheral.as_ref() else {
                     continue;
@@ -806,7 +798,10 @@ async fn subscribe_all(peripheral: Option<&Peripheral>, events: &Sender<BleEvent
 
     emit(
         events,
-        BleEvent::Status(format!("已订阅 {count} 个 Notify/Indicate Characteristic")),
+        BleEvent::Status(crate::i18n::LocalizedText::new(
+            "已订阅 {count} 个 Notify/Indicate Characteristic",
+            &[count.to_string()],
+        )),
     );
     Ok(())
 }

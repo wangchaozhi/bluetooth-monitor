@@ -1,29 +1,21 @@
-# Validation status
+﻿# Validation
 
-## Performed in the artifact-generation environment
-
-- `Cargo.toml` parsing
-- `rust-toolchain.toml` parsing
-- GitHub Actions YAML parsing
-- Rust source lexical delimiter/string sanity checks
-- duplicate/repeated initializer/reference scans around the v0.7 Session refactor
-- local Markdown link checks
-- stale-version/reference scans
-- source SHA-256 manifest generation
-- ZIP archive integrity check
-- current API spot-checks against `eframe 0.36.2` and other pinned dependency documentation
-
-## Not available in this environment
-
-The environment does not contain `cargo`, `rustc`, `rustfmt` or `clippy`, and the Rust standalone toolchain download endpoint is not reachable from this runtime. Therefore this snapshot is **not claimed to have passed compilation** here.
-
-## Required real-toolchain gate
+The project pins Rust 1.98.1 in `rust-toolchain.toml` and commits `Cargo.lock`.
+Run the same checks as CI before pushing:
 
 ```bash
 cargo fmt --check
-cargo check --all-targets
-cargo clippy --all-targets --all-features -- -D warnings
-cargo test --all-targets
+cargo check --locked --all-targets
+cargo clippy --locked --all-targets --all-features -- -D warnings
+cargo test --locked --all-targets
 ```
 
-The included GitHub Actions workflow performs this matrix on Windows, macOS and Linux. A real `Cargo.lock` should be generated and committed by the first successful Cargo build.
+GitHub Actions runs this gate on Windows, macOS, and Linux. Linux runners
+install the D-Bus and window-system development packages needed by btleplug
+and egui. Windows builds use the MSVC Rust toolchain and Visual Studio tools.
+
+Tests cover capture/replay, protocol decoding, UUID parsing, workspace and
+profile compatibility, and localization catalog and preference consistency.
+Hardware discovery, connections, and GATT operations need manual testing with
+a BLE adapter and a known peripheral. CI does not validate radio behavior or
+device-name availability.

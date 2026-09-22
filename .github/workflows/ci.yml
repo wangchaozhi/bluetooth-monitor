@@ -39,10 +39,10 @@ jobs:
         run: cargo fmt --check
 
       - name: cargo check
-        run: cargo check --all-targets
+        run: cargo check --locked --all-targets
 
       - name: clippy
-        run: cargo clippy --all-targets --all-features -- -D warnings
+        run: cargo clippy --locked --all-targets --all-features -- -D warnings
 
       - name: tests
-        run: cargo test --all-targets
+        run: cargo test --locked --all-targets

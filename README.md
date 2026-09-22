@@ -22,7 +22,7 @@ All direct dependencies are exact-pinned in `Cargo.toml` against the latest stab
 - thiserror 2.0.20
 - tracing 0.1.44 / tracing-subscriber 0.3.23
 
-A real `Cargo.lock` should be generated and committed after the first successful build in an environment with Cargo and crates.io access.
+`Cargo.lock` is committed. CI uses `--locked` to verify the same dependency resolution on all three platforms.
 
 ## v0.7 highlights
 
@@ -141,6 +141,23 @@ src/
 
 ## Run
 
+### Interface language
+
+Use the **语言 / Language** selector at the top of the window to switch between
+Simplified Chinese (the default) and English. Changes apply immediately and are
+saved with the application's preferences, including when the window closes.
+Existing preferences without a language field remain compatible.
+
+Translations are embedded from `locales/en.json` and `locales/zh-CN.json`.
+Keep both catalogs' keys and numbered placeholders (`{0}`, `{1}`, …) in sync;
+`cargo test` checks their consistency. Arguments are inserted without translating
+device names, user notes, UUIDs, or captured data. Low-level driver diagnostics
+remain in their original language.
+
+Chinese text uses a system font fallback: Microsoft YaHei on Windows, PingFang
+on macOS, and Noto Sans CJK or WenQuanYi Micro Hei on Linux. If none is installed,
+set `BLUETOOTH_MONITOR_FONT` to a CJK `.ttf`, `.otf`, or `.ttc` font file.
+
 ```bash
 cargo run
 ```
@@ -172,4 +189,4 @@ BlueZ and D-Bus development packages are required. The GitHub Actions job instal
 
 ## Validation status
 
-This artifact-generation environment still does not contain Rust/Cargo and cannot download the Rust toolchain, so this snapshot is not represented as having passed compilation. Static validation, source-manifest generation and archive integrity checks are performed before packaging. See `docs/VALIDATION.md`.
+The project is validated with Rust 1.98.1. See `docs/VALIDATION.md` for the local validation gate and the Windows, macOS, and Linux CI matrix.
